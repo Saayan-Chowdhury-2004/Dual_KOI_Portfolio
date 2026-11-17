@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.jpg" alt="Dual Koi Portfolio Banner" width="100%">
+</p>
+
 # Saayan Chowdhury | Dual Koi Portfolio
 
 > 🌐 **Live Demo:** [https://dual-koi-portfolio.vercel.app/](https://dual-koi-portfolio.vercel.app/)
