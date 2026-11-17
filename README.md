@@ -1,6 +1,8 @@
-# Personal Portfolio & Interactive Ink Koi Pond
+# Saayan Chowdhury | Dual Koi Portfolio
 
-An interactive, canvas-driven portfolio and fluid simulation created for **Saayan Chowdhury**. It blends traditional Japanese art aesthetics—**Mokkotsu** (boneless watercolor) and **Sumi-e** (ink wash)—with real-time fish flocking physics and interactive fluid dynamics.
+> 🌐 **Live Demo:** [https://dual-koi-portfolio.vercel.app/](https://dual-koi-portfolio.vercel.app/)
+
+An interactive, canvas-driven dual portfolio and fluid simulation created for **Saayan Chowdhury**. It blends traditional Japanese art aesthetics—**Mokkotsu** (boneless watercolor) and **Sumi-e** (ink wash)—with real-time fish flocking physics and interactive fluid dynamics.
 
 ---
 
@@ -99,10 +101,10 @@ You can transition the visual presentation between watercolor and ink wash at an
 
 ```bash
 # Clone the repository
-git clone https://github.com/Saayan-Chowdhury-2004/Portfolio_td.git
+git clone https://github.com/Saayan-Chowdhury-2004/Dual_KOI_Portfolio.git
 
 # Navigate into the project directory
-cd Portfolio_td
+cd Dual_KOI_Portfolio
 
 # Install dependencies
 npm install
