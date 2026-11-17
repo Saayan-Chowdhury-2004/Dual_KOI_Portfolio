@@ -2,7 +2,7 @@
 
 > 🌐 **Live Demo:** [https://dual-koi-portfolio.vercel.app/](https://dual-koi-portfolio.vercel.app/)
 
-An interactive, canvas-driven dual portfolio and fluid simulation created for **Saayan Chowdhury**. It blends traditional Japanese art aesthetics—**Mokkotsu** (boneless watercolor) and **Sumi-e** (ink wash)—with real-time fish flocking physics and interactive fluid dynamics.
+An interactive, canvas-driven dual portfolio. It blends traditional Japanese art aesthetics—**Mokkotsu** (boneless watercolor) and **Sumi-e** (ink wash)—with real-time fish flocking physics and interactive fluid dynamics.
 
 ---
 
