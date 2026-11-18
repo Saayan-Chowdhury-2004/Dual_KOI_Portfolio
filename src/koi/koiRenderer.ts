@@ -9,6 +9,8 @@
 
 import { RED_CARD_TEXTURE_URI, RED_KOI_BORDER_URI, KOI_PORTRAIT_DEFAULT_URI, KOI_PORTRAIT_INK_URI, KOI_PORTRAIT_REAL_URI } from "./columnArtData";
 import {
+  FLIP_OPEN_DURATION,
+  REDUCED_MOTION_FADE_DURATION,
   TILE_MAX_EXTRUDE_PX,
   buildRippleFieldConfig,
   computeAlignedTileSize,
@@ -17,20 +19,25 @@ import {
   type RippleCompositionBounds,
   type RippleOrigin,
 } from "./rippleField";
+import {
+  CAUDAL_FIN_CONFIG,
+  computeCaudalFin,
+  strokeCaudalFinRays,
+  traceCaudalFinPath,
+} from "./caudalFin";
 import { koiBodyHalfWidth, SPINE_NODE_COUNT } from "./koiGeometry";
 import { fbm2D, hash2D, koiClamp, koiLerp, koiSmoothstep } from "./koiMath";
 import { POND_PALETTES } from "./koiPond";
 import type {
   KoiFish,
   KoiPondConfig,
+  OrganicPatch,
   PondFish,
   PondFoodPellet,
   PondPalette,
   PondThemeName,
 } from "./koiTypes";
 import type { PondWorld } from "./pondWorld";
-
-export const BODY_GLYPH_RAMP = " .,:;irsXA253hMHGS#9B&@";
 
 export type KoiArtStyle = "mokkotsu" | "sumie";
 
@@ -81,14 +88,38 @@ function mixRgb(
   ];
 }
 
-export class AsciiKoiPondRenderer {
-  private fontFamily = '"Cormorant Garamond", "Noto Serif JP", serif';
+export class KoiPondRenderer {
+  private fontFamily = '"KanjiBrutalist", Georgia, "Times New Roman", serif';
   private configuredTheme: PondThemeName = "light-pond";
   private currentPalette: PondPalette = POND_PALETTES["light-pond"];
   private previousPalette: PondPalette | null = null;
   private themeTransitionStart = 0;
   private transitioning = false;
   private themeProgress = 1;
+  private sunCycleTargetLight = true;
+  private sunCycleStartHour = 12.0;
+  private sunCycleEndHour = 12.0;
+  private readonly sunCycleDurationMs = 2400;
+  private darkModeToggleAt = -1;
+  private causticTileCache: Map<string, HTMLCanvasElement> = new Map();
+  private canopyShadowCache: Map<string, HTMLCanvasElement> = new Map();
+  private botanicalSpriteCacheMap: Map<
+    string,
+    {
+      lotus: HTMLCanvasElement[];
+      companion: HTMLCanvasElement[];
+      pinkLotus: HTMLCanvasElement[];
+    }
+  > = new Map();
+  private sakuraSpriteCacheMap: Map<
+    string,
+    {
+      floatingFlower: HTMLCanvasElement[];
+      sunkenFlower: HTMLCanvasElement[];
+      floatingPetal: HTMLCanvasElement[];
+      sunkenPetal: HTMLCanvasElement[];
+    }
+  > = new Map();
 
   private artStyle: KoiArtStyle = "mokkotsu";
 
@@ -135,17 +166,38 @@ export class AsciiKoiPondRenderer {
     swayVy: number;
     rotOffset: number;
     rotVel: number;
+    dispX: number;
+    dispY: number;
+    dispVx: number;
+    dispVy: number;
+    bowX: number;
+    bowY: number;
   }[] = [
-    { leafPhase: 0.0, flowerPhase: -0.65, excite: 0, baseFreq: 0.26, swayX: 0, swayY: 0, swayVx: 0, swayVy: 0, rotOffset: 0, rotVel: 0 },
-    { leafPhase: 1.4, flowerPhase: 0.75, excite: 0, baseFreq: 0.35, swayX: 0, swayY: 0, swayVx: 0, swayVy: 0, rotOffset: 0, rotVel: 0 },
-    { leafPhase: 2.8, flowerPhase: 2.15, excite: 0, baseFreq: 0.39, swayX: 0, swayY: 0, swayVx: 0, swayVy: 0, rotOffset: 0, rotVel: 0 },
-    { leafPhase: 4.2, flowerPhase: 3.55, excite: 0, baseFreq: 0.44, swayX: 0, swayY: 0, swayVx: 0, swayVy: 0, rotOffset: 0, rotVel: 0 },
-    { leafPhase: 5.5, flowerPhase: 4.85, excite: 0, baseFreq: 0.32, swayX: 0, swayY: 0, swayVx: 0, swayVy: 0, rotOffset: 0, rotVel: 0 },
-    { leafPhase: 2.1, flowerPhase: 1.45, excite: 0, baseFreq: 0.24, swayX: 0, swayY: 0, swayVx: 0, swayVy: 0, rotOffset: 0, rotVel: 0 },
-    { leafPhase: 3.7, flowerPhase: 3.05, excite: 0, baseFreq: 0.31, swayX: 0, swayY: 0, swayVx: 0, swayVy: 0, rotOffset: 0, rotVel: 0 },
-    { leafPhase: 0.9, flowerPhase: 0.25, excite: 0, baseFreq: 0.37, swayX: 0, swayY: 0, swayVx: 0, swayVy: 0, rotOffset: 0, rotVel: 0 },
-    { leafPhase: 4.9, flowerPhase: 4.25, excite: 0, baseFreq: 0.42, swayX: 0, swayY: 0, swayVx: 0, swayVy: 0, rotOffset: 0, rotVel: 0 },
+    { leafPhase: 0.0, flowerPhase: -0.65, excite: 0, baseFreq: 0.26, swayX: 0, swayY: 0, swayVx: 0, swayVy: 0, rotOffset: 0, rotVel: 0, dispX: 0, dispY: 0, dispVx: 0, dispVy: 0, bowX: 0, bowY: 0 },
+    { leafPhase: 1.4, flowerPhase: 0.75, excite: 0, baseFreq: 0.35, swayX: 0, swayY: 0, swayVx: 0, swayVy: 0, rotOffset: 0, rotVel: 0, dispX: 0, dispY: 0, dispVx: 0, dispVy: 0, bowX: 0, bowY: 0 },
+    { leafPhase: 2.8, flowerPhase: 2.15, excite: 0, baseFreq: 0.39, swayX: 0, swayY: 0, swayVx: 0, swayVy: 0, rotOffset: 0, rotVel: 0, dispX: 0, dispY: 0, dispVx: 0, dispVy: 0, bowX: 0, bowY: 0 },
+    { leafPhase: 4.2, flowerPhase: 3.55, excite: 0, baseFreq: 0.44, swayX: 0, swayY: 0, swayVx: 0, swayVy: 0, rotOffset: 0, rotVel: 0, dispX: 0, dispY: 0, dispVx: 0, dispVy: 0, bowX: 0, bowY: 0 },
+    { leafPhase: 5.5, flowerPhase: 4.85, excite: 0, baseFreq: 0.32, swayX: 0, swayY: 0, swayVx: 0, swayVy: 0, rotOffset: 0, rotVel: 0, dispX: 0, dispY: 0, dispVx: 0, dispVy: 0, bowX: 0, bowY: 0 },
+    { leafPhase: 2.1, flowerPhase: 1.45, excite: 0, baseFreq: 0.24, swayX: 0, swayY: 0, swayVx: 0, swayVy: 0, rotOffset: 0, rotVel: 0, dispX: 0, dispY: 0, dispVx: 0, dispVy: 0, bowX: 0, bowY: 0 },
+    { leafPhase: 3.7, flowerPhase: 3.05, excite: 0, baseFreq: 0.31, swayX: 0, swayY: 0, swayVx: 0, swayVy: 0, rotOffset: 0, rotVel: 0, dispX: 0, dispY: 0, dispVx: 0, dispVy: 0, bowX: 0, bowY: 0 },
+    { leafPhase: 0.9, flowerPhase: 0.25, excite: 0, baseFreq: 0.37, swayX: 0, swayY: 0, swayVx: 0, swayVy: 0, rotOffset: 0, rotVel: 0, dispX: 0, dispY: 0, dispVx: 0, dispVy: 0, bowX: 0, bowY: 0 },
+    { leafPhase: 4.9, flowerPhase: 4.25, excite: 0, baseFreq: 0.42, swayX: 0, swayY: 0, swayVx: 0, swayVy: 0, rotOffset: 0, rotVel: 0, dispX: 0, dispY: 0, dispVx: 0, dispVy: 0, bowX: 0, bowY: 0 },
   ];
+  private readonly companionLeafStates: {
+    dispX: number;
+    dispY: number;
+    dispVx: number;
+    dispVy: number;
+    bowX: number;
+    bowY: number;
+  }[] = Array.from({ length: 18 }, () => ({
+    dispX: 0,
+    dispY: 0,
+    dispVx: 0,
+    dispVy: 0,
+    bowX: 0,
+    bowY: 0,
+  }));
 
   // Unbounded free-floating world position & velocity state for the 6 floating maple leaves (no region lock!)
   private readonly mapleLeafStates: {
@@ -188,6 +240,7 @@ export class AsciiKoiPondRenderer {
     wingPhase: number;
     variety: "akiakane" | "ruriboshi";
     scale: number;
+    departed: boolean;
   }[] = Array.from({ length: 5 }, (_, idx) => ({
     initialized: false,
     x: 0,
@@ -208,6 +261,7 @@ export class AsciiKoiPondRenderer {
     wingPhase: idx * 2.1,
     variety: idx % 2 === 0 ? "akiakane" : "ruriboshi",
     scale: 1.16 + (idx % 3) * 0.10,
+    departed: false,
   }));
   private lastDragonflyUpdateAt = 0;
 
@@ -371,7 +425,7 @@ export class AsciiKoiPondRenderer {
 
   public setFontFamily(family: string): void {
     if (family && family !== this.fontFamily) {
-      this.fontFamily = `"Cormorant Garamond", ${family}`;
+      this.fontFamily = `"KanjiBrutalist", ${family}`;
     }
   }
 
@@ -506,7 +560,7 @@ export class AsciiKoiPondRenderer {
    * when the pond is in Night Mode and the lamp button + lamplight activate automatically.
    */
   public static isNightLampTime(hours: number): boolean {
-    const h = AsciiKoiPondRenderer.normalizeHours(hours);
+    const h = KoiPondRenderer.normalizeHours(hours);
     return h >= 18.0 || h < 6.0;
   }
 
@@ -518,7 +572,7 @@ export class AsciiKoiPondRenderer {
    * - 05:00..09:00 -> dawn brightening from 0.0 to 1.0
    */
   public static computeDaylightFactor(hours: number): number {
-    const h = AsciiKoiPondRenderer.normalizeHours(hours);
+    const h = KoiPondRenderer.normalizeHours(hours);
     if (h >= 9.0 && h < 15.0) return 1.0;
     if (h >= 15.0 && h < 16.2) {
       // 15:00..16:12 -> warm late afternoon (1.0 down to 0.76)
@@ -542,7 +596,7 @@ export class AsciiKoiPondRenderer {
    * sunset and twilight (16:50..21:30), and lingers softly through the night until dawn (05:30).
    */
   public static computeEveningFireflyFactor(hours: number): number {
-    const h = AsciiKoiPondRenderer.normalizeHours(hours);
+    const h = KoiPondRenderer.normalizeHours(hours);
     if (h >= 16.2 && h < 16.85) {
       return koiSmoothstep(16.2, 16.85, h);
     }
@@ -563,11 +617,11 @@ export class AsciiKoiPondRenderer {
   }
 
   public getDaylightFactor(): number {
-    return AsciiKoiPondRenderer.computeDaylightFactor(this.timeOfDayHours);
+    return KoiPondRenderer.computeDaylightFactor(this.timeOfDayHours);
   }
 
   public getEveningFireflyFactor(): number {
-    return AsciiKoiPondRenderer.computeEveningFireflyFactor(this.timeOfDayHours);
+    return KoiPondRenderer.computeEveningFireflyFactor(this.timeOfDayHours);
   }
 
   /**
@@ -576,7 +630,7 @@ export class AsciiKoiPondRenderer {
    * afternoon (06:45..15:45), and fades out before sunset (15:45..16:25).
    */
   public static computeDaytimeDragonflyFactor(hours: number): number {
-    const h = AsciiKoiPondRenderer.normalizeHours(hours);
+    const h = KoiPondRenderer.normalizeHours(hours);
     if (h >= 5.75 && h < 6.75) {
       return koiSmoothstep(5.75, 6.75, h);
     }
@@ -590,13 +644,98 @@ export class AsciiKoiPondRenderer {
   }
 
   public getDaytimeDragonflyFactor(): number {
-    return AsciiKoiPondRenderer.computeDaytimeDragonflyFactor(this.timeOfDayHours);
+    return KoiPondRenderer.computeDaytimeDragonflyFactor(this.timeOfDayHours);
+  }
+
+  /**
+   * Unified solar/lunar lighting state for the entire pond:
+   * - `sunNormX, sunNormY`: virtual sun arc (East/right sunrise -> High midday -> West/left sunset)
+   * - `shadowX, shadowY`: dynamic shadow offset in px/unit opposite sun azimuth (stretches long West
+   *   at sunrise, shortens to (+20, +26) at noon, stretches long East at sunset, diffuses at night)
+   * - `shadowBlurScale`: sharper at noon (1.0), softer penumbra at low sun / twilight / night (up to 1.85)
+   * - `lowSunWarmth`: [0..1] golden-hour / amber-vermilion intensity at sunrise & sunset
+   */
+  private getSolarLightingState(): {
+    daylight: number;
+    h: number;
+    sunNormX: number;
+    sunNormY: number;
+    shadowX: number;
+    shadowY: number;
+    shadowBlurScale: number;
+    lowSunWarmth: number;
+    isSunriseWindow: boolean;
+    isSunsetWindow: boolean;
+  } {
+    const daylight = this.getDaylightFactor();
+    const h = KoiPondRenderer.normalizeHours(this.timeOfDayHours);
+
+    let sunNormX = 0.50;
+    let sunNormY = 0.36;
+    let shadowX = 20.0;
+    let shadowY = 26.0;
+    let shadowBlurScale = 1.0;
+    let lowSunWarmth = 0.0;
+    let isSunriseWindow = false;
+    let isSunsetWindow = false;
+
+    if (h >= 4.8 && h < 9.2) {
+      isSunriseWindow = true;
+      const u = koiClamp((h - 4.8) / 4.4, 0, 1);
+      const ease = koiSmoothstep(0, 1, u);
+      sunNormX = koiLerp(0.90, 0.50, ease);
+      sunNormY = koiLerp(0.20, 0.36, ease);
+      shadowX = koiLerp(-52.0, 20.0, ease);
+      shadowY = koiLerp(34.0, 26.0, ease);
+      lowSunWarmth = Math.sin(u * Math.PI);
+      shadowBlurScale = koiLerp(1.75, 1.0, ease);
+    } else if (h >= 9.2 && h < 14.3) {
+      const u = koiClamp((h - 9.2) / 5.1, 0, 1);
+      sunNormX = koiLerp(0.50, 0.46, u);
+      sunNormY = koiLerp(0.36, 0.40, u);
+      shadowX = koiLerp(18.0, 22.0, u);
+      shadowY = koiLerp(26.0, 25.0, u);
+      lowSunWarmth = 0.0;
+      shadowBlurScale = 1.0;
+    } else if (h >= 14.3 && h < 18.4) {
+      isSunsetWindow = true;
+      const u = koiClamp((h - 14.3) / 4.1, 0, 1);
+      const ease = koiSmoothstep(0, 1, u);
+      sunNormX = koiLerp(0.46, 0.08, ease);
+      sunNormY = koiLerp(0.40, 0.78, ease);
+      const stretchPeak = Math.sin(Math.min(1, u * 1.15) * Math.PI * 0.5);
+      const twilightDiffuse = koiSmoothstep(0.75, 1.0, u);
+      shadowX = koiLerp(koiLerp(22.0, 64.0, stretchPeak), 12.0, twilightDiffuse);
+      shadowY = koiLerp(koiLerp(25.0, 14.0, stretchPeak), 18.0, twilightDiffuse);
+      lowSunWarmth = Math.sin(u * Math.PI);
+      shadowBlurScale = koiLerp(1.0, 1.85, ease);
+    } else {
+      sunNormX = 0.34;
+      sunNormY = 0.24;
+      shadowX = 12.0;
+      shadowY = 18.0;
+      lowSunWarmth = 0.0;
+      shadowBlurScale = 1.75;
+    }
+
+    return {
+      daylight,
+      h,
+      sunNormX,
+      sunNormY,
+      shadowX,
+      shadowY,
+      shadowBlurScale,
+      lowSunWarmth,
+      isSunriseWindow,
+      isSunsetWindow,
+    };
   }
 
   public setTimeOfDayHours(hours: number, immediate = false): void {
-    const prevNight = AsciiKoiPondRenderer.isNightLampTime(this.timeOfDayHours);
-    const nextHours = AsciiKoiPondRenderer.normalizeHours(hours);
-    const nextNight = AsciiKoiPondRenderer.isNightLampTime(nextHours);
+    const prevNight = KoiPondRenderer.isNightLampTime(this.timeOfDayHours);
+    const nextHours = KoiPondRenderer.normalizeHours(hours);
+    const nextNight = KoiPondRenderer.isNightLampTime(nextHours);
     this.timeOfDayHours = nextHours;
 
     const nextTheme: PondThemeName = nextNight ? "black-pond" : "light-pond";
@@ -617,12 +756,16 @@ export class AsciiKoiPondRenderer {
       this.previousPalette = null;
       this.transitioning = false;
       this.themeProgress = 1;
+      this.sunCycleTargetLight = !nextNight;
       this.flashlightDispersal = !nextNight || !this.flashlightEnabled ? 1 : 0;
     }
   }
 
   public get isLightMode(): boolean {
-    return !AsciiKoiPondRenderer.isNightLampTime(this.timeOfDayHours);
+    if (this.transitioning) {
+      return this.sunCycleTargetLight;
+    }
+    return !KoiPondRenderer.isNightLampTime(this.timeOfDayHours);
   }
 
   public get isTransitioning(): boolean {
@@ -839,10 +982,17 @@ export class AsciiKoiPondRenderer {
     this.activeColumnRects = rects;
   }
 
-  public syncDynamicStateFrom(other: AsciiKoiPondRenderer): void {
+  public syncDynamicStateFrom(other: KoiPondRenderer): void {
     this.timeOfDayHours = other.timeOfDayHours;
     this.configuredTheme = other.configuredTheme;
     this.currentPalette = other.currentPalette;
+    this.transitioning = other.transitioning;
+    this.themeProgress = other.themeProgress;
+    this.sunCycleTargetLight = other.sunCycleTargetLight;
+    this.sunCycleStartHour = other.sunCycleStartHour;
+    this.sunCycleEndHour = other.sunCycleEndHour;
+    this.darkModeToggleAt = other.darkModeToggleAt;
+    this.themeTransitionStart = other.themeTransitionStart;
     this.flashX = other.flashX;
     this.flashY = other.flashY;
     this.flashlightDispersal = other.flashlightDispersal;
@@ -859,6 +1009,9 @@ export class AsciiKoiPondRenderer {
     this.rippleReducedMotion = other.rippleReducedMotion;
     for (let i = 0; i < this.lotusPadStates.length && i < other.lotusPadStates.length; i++) {
       Object.assign(this.lotusPadStates[i], other.lotusPadStates[i]);
+    }
+    for (let i = 0; i < this.companionLeafStates.length && i < other.companionLeafStates.length; i++) {
+      Object.assign(this.companionLeafStates[i], other.companionLeafStates[i]);
     }
     this.mapleLeafWorldW = other.mapleLeafWorldW;
     this.mapleLeafWorldH = other.mapleLeafWorldH;
@@ -964,16 +1117,46 @@ export class AsciiKoiPondRenderer {
 
   public setLightMode(isLight: boolean, immediate = false): void {
     const currentlyLight = this.isLightMode;
+    if (immediate) {
+      this.sunCycleTargetLight = isLight;
+      this.darkModeToggleAt = -1;
+      this.transitioning = false;
+      this.themeProgress = 1;
+      this.setTimeOfDayHours(isLight ? 12.0 : 18.5, true);
+      return;
+    }
+
     if (currentlyLight !== isLight) {
-      this.setTimeOfDayHours(isLight ? 12.0 : 18.0, immediate);
-      if (!immediate) {
-        this.previousPalette = POND_PALETTES[currentlyLight ? "light-pond" : "black-pond"];
-        this.themeTransitionStart = performance.now();
-        this.transitioning = true;
-        this.themeProgress = 0;
+      const curDaylight = this.getDaylightFactor();
+      this.sunCycleTargetLight = isLight;
+      this.previousPalette = POND_PALETTES[currentlyLight ? "light-pond" : "black-pond"];
+      this.configuredTheme = isLight ? "light-pond" : "black-pond";
+      this.currentPalette = POND_PALETTES[this.configuredTheme];
+
+      if (!isLight) {
+        // Day -> Night: Sped-up Sunset (14.4h late afternoon -> 18.35h nightfall)
+        // Record click timestamp so fireflies emerge in arithmetic progression 2.0s after toggle
+        this.darkModeToggleAt = performance.now();
+        this.sunCycleStartHour = 14.4 + (1.0 - curDaylight) * 3.6;
+        this.sunCycleEndHour = 18.35;
+        if (!this.hasAutoActivatedFlashlightOnce) {
+          this.flashlightEnabled = true;
+          this.hasAutoActivatedFlashlightOnce = true;
+        } else {
+          this.flashlightEnabled = false;
+        }
+      } else {
+        this.darkModeToggleAt = -1;
+        // Night -> Day: Sped-up Sunrise (04.85h pre-dawn -> 09.15h bright morning)
+        // If clicked mid-sunset, match starting sunrise hour to current daylight level
+        this.sunCycleStartHour = 4.85 + curDaylight * 4.15;
+        this.sunCycleEndHour = 9.15;
       }
-    } else if (immediate) {
-      this.flashlightDispersal = isLight || !this.flashlightEnabled ? 1 : 0;
+
+      this.timeOfDayHours = this.sunCycleStartHour;
+      this.themeTransitionStart = performance.now();
+      this.transitioning = true;
+      this.themeProgress = 0;
     }
   }
 
@@ -998,12 +1181,21 @@ export class AsciiKoiPondRenderer {
       }
     }
     if (!this.transitioning) return;
-    const elapsed = now - this.themeTransitionStart;
-    this.themeProgress = koiClamp(elapsed / THEME_TRANSITION_MS, 0, 1);
-    if (this.themeProgress >= 1) {
+    const durMs = this.rippleReducedMotion ? 250 : this.sunCycleDurationMs;
+    const elapsed = Math.max(0, now - this.themeTransitionStart);
+    const rawT = koiClamp(elapsed / durMs, 0, 1);
+    // Smooth sine-in-out / cubic progression of the sun across the sky
+    const easeT = rawT * rawT * (3 - 2 * rawT);
+    this.themeProgress = rawT;
+    this.timeOfDayHours = KoiPondRenderer.normalizeHours(
+      this.sunCycleStartHour + (this.sunCycleEndHour - this.sunCycleStartHour) * easeT
+    );
+
+    if (rawT >= 1) {
       this.transitioning = false;
       this.previousPalette = null;
       this.themeProgress = 1;
+      this.timeOfDayHours = this.sunCycleTargetLight ? 12.0 : 18.5;
     }
   }
 
@@ -1391,6 +1583,9 @@ export class AsciiKoiPondRenderer {
               ? `rgba(36, 30, 26, ${(0.88 * alpha).toFixed(3)})`
               : `rgba(224, 212, 192, ${(0.88 * alpha).toFixed(3)})`;
         ctx.fill();
+        ctx.lineWidth = 1.1;
+        ctx.strokeStyle = `rgba(8, 7, 7, ${(0.90 * alpha).toFixed(3)})`;
+        ctx.stroke();
       } else {
         const g = ctx.createRadialGradient(
           px - p.radius * 0.3,
@@ -1862,31 +2057,31 @@ export class AsciiKoiPondRenderer {
       ctx.globalAlpha *= 0.62;
     }
 
-    // 4B. Soft, translucent contact shadow projected onto the pond bed,
-    //     offset 3.4px horizontally and 4.2px vertically in the lotus directional light angle
-    const shOx = 3.4 * unit;
-    const shOy = 4.2 * unit;
-    traceStemPolygon(shOx, shOy, 1.18);
-    ctx.fillStyle = isLight
-      ? "rgba(22, 16, 10, 0.24)"
-      : "rgba(0, 0, 0, 0.46)";
+    // 4B. Dynamic solar contact shadow projected onto the pond bed along the live sun vector
+    const solar = this.getSolarLightingState();
+    const stemDay = solar.daylight;
+    const shOx = solar.shadowX * 0.17 * unit;
+    const shOy = solar.shadowY * 0.16 * unit;
+    traceStemPolygon(shOx, shOy, 1.16 + (solar.shadowBlurScale - 1.0) * 0.22);
+    const shR = Math.round(koiLerp(0, 22, stemDay));
+    const shG = Math.round(koiLerp(0, 16, stemDay));
+    const shB = Math.round(koiLerp(0, 10, stemDay));
+    const shA = koiLerp(0.46, 0.24, stemDay);
+    ctx.fillStyle = `rgba(${shR}, ${shG}, ${shB}, ${shA.toFixed(3)})`;
     ctx.fill();
 
-    // 4A. Stem body painted with multi-stop directional gradient along its length
+    // 4A. Stem body painted with multi-stop directional gradient along its length (continuous daylight blend)
     traceStemPolygon(0, 0, 1.0);
     const stemGrad = ctx.createLinearGradient(p0.x, p0.y, p3.x, p3.y);
     if (style === "sumie") {
-      if (isLight) {
-        stemGrad.addColorStop(0.0, "#1f1c19");
-        stemGrad.addColorStop(0.42, "#3a3530");
-        stemGrad.addColorStop(0.74, "#504a43");
-        stemGrad.addColorStop(1.0, "#686058");
-      } else {
-        stemGrad.addColorStop(0.0, "#24211e");
-        stemGrad.addColorStop(0.42, "#423d37");
-        stemGrad.addColorStop(0.74, "#5a534b");
-        stemGrad.addColorStop(1.0, "#746b61");
-      }
+      const s0 = mixRgb([36, 33, 30], [31, 28, 25], stemDay);
+      const s1 = mixRgb([66, 61, 55], [58, 53, 48], stemDay);
+      const s2 = mixRgb([90, 83, 75], [80, 74, 67], stemDay);
+      const s3 = mixRgb([116, 107, 97], [104, 96, 88], stemDay);
+      stemGrad.addColorStop(0.0, rgbToRgba(s0, 1));
+      stemGrad.addColorStop(0.42, rgbToRgba(s1, 1));
+      stemGrad.addColorStop(0.74, rgbToRgba(s2, 1));
+      stemGrad.addColorStop(1.0, rgbToRgba(s3, 1));
     } else {
       // Root base: Dark earth brown with russet undertones (#2e2418)
       // Mid-stem: Muted olive green (#424c26 to #546430)
@@ -1899,11 +2094,11 @@ export class AsciiKoiPondRenderer {
     ctx.fillStyle = stemGrad;
     ctx.fill();
 
-    // Anti-aliasing hairline stroke along the closed polygon contour
-    ctx.lineWidth = Math.max(0.45, 0.55 * unit);
+    // Crisp Sumi-e deep black ink border on stems; subtle botanical contour in Mokkotsu
+    ctx.lineWidth = style === "sumie" ? Math.max(1.0, 1.25 * unit) : Math.max(0.45, 0.55 * unit);
     ctx.strokeStyle =
       style === "sumie"
-        ? "rgba(32, 28, 24, 0.45)"
+        ? "rgba(10, 9, 8, 0.92)"
         : "rgba(36, 42, 20, 0.52)";
     ctx.stroke();
 
@@ -1928,6 +2123,11 @@ export class AsciiKoiPondRenderer {
         ctx.beginPath();
         ctx.arc(ap.x, ap.y, ar, 0, Math.PI * 2);
         ctx.fill();
+        if (style === "sumie") {
+          ctx.lineWidth = Math.max(0.8, 0.95 * unit);
+          ctx.strokeStyle = "rgba(10, 9, 8, 0.86)";
+          ctx.stroke();
+        }
       }
     }
 
@@ -2102,6 +2302,11 @@ export class AsciiKoiPondRenderer {
       }
       ctx.fillStyle = bGrad;
       ctx.fill();
+      if (style === "sumie") {
+        ctx.lineWidth = Math.max(0.95, 1.15 * unit);
+        ctx.strokeStyle = "rgba(10, 9, 8, 0.92)";
+        ctx.stroke();
+      }
 
       // Cupped green calyx sepals cradling the bud base
       ctx.beginPath();
@@ -2111,6 +2316,11 @@ export class AsciiKoiPondRenderer {
       ctx.closePath();
       ctx.fillStyle = style === "sumie" ? "#3b3631" : "#4a5a28";
       ctx.fill();
+      if (style === "sumie") {
+        ctx.lineWidth = Math.max(0.85, 1.0 * unit);
+        ctx.strokeStyle = "rgba(10, 9, 8, 0.90)";
+        ctx.stroke();
+      }
 
       // Delicate petal seam highlight
       ctx.beginPath();
@@ -2142,6 +2352,11 @@ export class AsciiKoiPondRenderer {
       }
       ctx.fillStyle = sGrad;
       ctx.fill();
+      if (style === "sumie") {
+        ctx.lineWidth = Math.max(0.95, 1.15 * unit);
+        ctx.strokeStyle = "rgba(10, 9, 8, 0.92)";
+        ctx.stroke();
+      }
 
       // Coiled diagonal scroll ribs
       ctx.lineWidth = Math.max(0.45, 0.55 * unit);
@@ -2198,20 +2413,18 @@ export class AsciiKoiPondRenderer {
     for (let i = 0; i < resolvedPads.length; i++) {
       const pad = resolvedPads[i];
       const st = this.lotusPadStates[i];
-      const ampBoost = 1.0 + st.excite * 1.65;
-      const swayX = Math.sin(st.leafPhase) * 3.0 * unit * ampBoost + st.swayX;
-      const swayY = Math.cos(st.leafPhase * 0.84 + i) * 2.4 * unit * ampBoost + st.swayY;
+      const ampBoost = 1.0 + st.excite * 0.22;
+      const swayX = Math.sin(st.leafPhase) * 3.0 * unit * ampBoost + st.swayX + st.dispX;
+      const swayY = Math.cos(st.leafPhase * 0.84 + i) * 2.4 * unit * ampBoost + st.swayY + st.dispY;
       const cx = pad.x + swayX;
       const cy = pad.y + swayY;
       const notchAngle =
         pad.notch +
-        Math.sin(st.leafPhase * 0.58) * (0.04 + st.excite * 0.055) +
+        Math.sin(st.leafPhase * 0.58) * (0.025 + st.excite * 0.015) +
         st.rotOffset;
 
-      // Live navel hub attachment underneath the large lotus pad
       const tipX = cx - Math.cos(notchAngle) * (pad.r * 0.06);
       const tipY = cy - Math.sin(notchAngle) * (pad.r * 0.06);
-      // Stationary rest navel hub attachment so edge exit never snaps to adjacent edge
       const restTipX = pad.x - Math.cos(pad.notch) * (pad.r * 0.06);
       const restTipY = pad.y - Math.sin(pad.notch) * (pad.r * 0.06);
 
@@ -2227,6 +2440,10 @@ export class AsciiKoiPondRenderer {
         time,
         stemIdx
       );
+      curve.c1.x += st.bowX * 0.26 + st.dispX * 0.10;
+      curve.c1.y += st.bowY * 0.26 + st.dispY * 0.10;
+      curve.c2.x += st.bowX * 0.38 + st.dispX * 0.20;
+      curve.c2.y += st.bowY * 0.38 + st.dispY * 0.20;
       // 1/3 of stems marked as deep layers (every 3rd stem)
       const isDeepStem = stemIdx % 3 === 0;
       const hasLateralBud = !isDeepStem && (stemIdx % 2 === 1);
@@ -2243,18 +2460,18 @@ export class AsciiKoiPondRenderer {
     for (let cIdx = 0; cIdx < companionLeaves.length; cIdx++) {
       const comp = companionLeaves[cIdx];
       const st = this.lotusPadStates[comp.parentIdx];
+      const cst = this.companionLeafStates[cIdx];
       const cPhase = st.leafPhase * 1.08 + cIdx * 0.85;
-      const ampBoost = 1.0 + st.excite * 1.55;
-      const swayX = Math.sin(cPhase) * 2.5 * unit * ampBoost + st.swayX * 0.90;
-      const swayY = Math.cos(cPhase * 0.86 + cIdx) * 2.0 * unit * ampBoost + st.swayY * 0.90;
+      const ampBoost = 1.0 + st.excite * 0.22;
+      const swayX = Math.sin(cPhase) * 2.5 * unit * ampBoost + st.swayX * 0.90 + (cst ? cst.dispX : 0);
+      const swayY = Math.cos(cPhase * 0.86 + cIdx) * 2.0 * unit * ampBoost + st.swayY * 0.90 + (cst ? cst.dispY : 0);
       const cx = comp.x + swayX;
       const cy = comp.y + swayY;
       const notchAngle =
         comp.notch +
-        Math.sin(cPhase * 0.62) * (0.045 + st.excite * 0.05) +
+        Math.sin(cPhase * 0.62) * (0.025 + st.excite * 0.015) +
         st.rotOffset * 0.92;
 
-      // Companion leaf stem joins at the margin notch cleft (concealed beneath the blade around the cleft vertex)
       const cleftR = comp.r * 0.20;
       const tipX = cx + Math.cos(notchAngle) * cleftR;
       const tipY = cy + Math.sin(notchAngle) * cleftR;
@@ -2273,6 +2490,12 @@ export class AsciiKoiPondRenderer {
         time,
         stemIdx
       );
+      if (cst) {
+        curve.c1.x += cst.bowX * 0.26 + cst.dispX * 0.10;
+        curve.c1.y += cst.bowY * 0.26 + cst.dispY * 0.10;
+        curve.c2.x += cst.bowX * 0.38 + cst.dispX * 0.20;
+        curve.c2.y += cst.bowY * 0.38 + cst.dispY * 0.20;
+      }
       const isDeepStem = stemIdx % 3 === 0;
       const hasLateralBud = !isDeepStem && (cIdx % 4 === 1);
       stems.push({
@@ -2418,12 +2641,16 @@ export class AsciiKoiPondRenderer {
   ): void {
     const quantUnit = Math.round(unit * 40) / 40;
     const key = `${quantUnit}:${isLight ? "L" : "D"}:${style}:v7`;
-    if (
-      this.botanicalSpriteKey === key &&
-      this.lotusLeafSprites.length === 9 &&
-      this.companionLeafSprites.length === 18
-    ) {
+    const cachedSet = this.botanicalSpriteCacheMap.get(key);
+    if (cachedSet && cachedSet.lotus.length === 9 && cachedSet.companion.length === 18) {
+      this.botanicalSpriteKey = key;
+      this.lotusLeafSprites = cachedSet.lotus;
+      this.companionLeafSprites = cachedSet.companion;
+      this.pinkLotusSprites = cachedSet.pinkLotus;
       return;
+    }
+    if (this.botanicalSpriteCacheMap.size >= 6) {
+      this.botanicalSpriteCacheMap.clear();
     }
     this.botanicalSpriteKey = key;
 
@@ -2810,12 +3037,10 @@ export class AsciiKoiPondRenderer {
         sCtx.stroke();
 
         traceLeaf(0, 0, r);
-        sCtx.lineWidth = 1.35 * quantUnit;
+        sCtx.lineWidth = style === "sumie" ? Math.max(1.8, 2.25 * quantUnit) : 1.35 * quantUnit;
         sCtx.strokeStyle =
           style === "sumie"
-            ? isLight
-              ? "rgba(22, 20, 18, 0.84)"
-              : "rgba(168, 158, 142, 0.42)"
+            ? "rgba(10, 9, 8, 0.94)"
             : isLight
               ? "rgba(218, 178, 42, 0.92)"
               : "rgba(142, 116, 28, 0.84)";
@@ -2854,6 +3079,14 @@ export class AsciiKoiPondRenderer {
             }
             sCtx.fillStyle = pg;
             sCtx.fill();
+            if (isMono) {
+              sCtx.shadowBlur = 0;
+              sCtx.shadowOffsetX = 0;
+              sCtx.shadowOffsetY = 0;
+              sCtx.lineWidth = Math.max(0.85, 1.0 * quantUnit);
+              sCtx.strokeStyle = "rgba(10, 9, 8, 0.92)";
+              sCtx.stroke();
+            }
             sCtx.restore();
           };
 
@@ -2901,7 +3134,7 @@ export class AsciiKoiPondRenderer {
                 pGrad.addColorStop(1.0, `rgba(${Math.round(186 * dimF)}, ${Math.round(182 * dimF)}, ${Math.round(174 * dimF)}, 1.0)`);
                 sCtx.fillStyle = pGrad;
                 sCtx.fill();
-                sCtx.strokeStyle = `rgba(${Math.round(86 * dimF)}, ${Math.round(82 * dimF)}, ${Math.round(76 * dimF)}, 0.42)`;
+                sCtx.strokeStyle = "rgba(10, 9, 8, 0.92)";
               } else {
                 pGrad.addColorStop(0.0, `rgba(${Math.round(202 * dimF)}, ${Math.round(54 * dimF)}, ${Math.round(92 * dimF)}, 1.0)`);
                 pGrad.addColorStop(0.42, `rgba(${Math.round(246 * dimF)}, ${Math.round(154 * dimF)}, ${Math.round(184 * dimF)}, 1.0)`);
@@ -2911,7 +3144,7 @@ export class AsciiKoiPondRenderer {
                 sCtx.fill();
                 sCtx.strokeStyle = `rgba(${Math.round(176 * dimF)}, ${Math.round(72 * dimF)}, ${Math.round(104 * dimF)}, 0.38)`;
               }
-              sCtx.lineWidth = Math.max(0.4, fRad * 0.035);
+              sCtx.lineWidth = isMono ? Math.max(0.9, 1.05 * quantUnit) : Math.max(0.4, fRad * 0.035);
               sCtx.stroke();
               sCtx.restore();
             }
@@ -2957,54 +3190,51 @@ export class AsciiKoiPondRenderer {
             sCtx.restore();
           };
 
+          const leafSakuraMono = style === "sumie";
           if (pad.r >= 88) {
-            // The 2 Biggest Lotus Leaves (`r = 88` and `r = 92`):
-            // 1 Whole Sakura Flower + 2 Single Sakura Petals on the open leaf blade opposite the blooming lotus (`+0.35 rad`)
             drawLeafWholeFlower(
               cx + Math.cos(3.08) * (r * 0.52),
               cy + Math.sin(3.08) * (r * 0.52),
               13.5 * quantUnit,
               0.42,
-              style === "sumie" && i === 0
+              leafSakuraMono
             );
             drawLeafPetal(
               cx + Math.cos(2.05) * (r * 0.64),
               cy + Math.sin(2.05) * (r * 0.64),
               8.2 * quantUnit,
               1.35,
-              style === "sumie"
+              leafSakuraMono
             );
             drawLeafPetal(
               cx + Math.cos(4.22) * (r * 0.60),
               cy + Math.sin(4.22) * (r * 0.60),
               7.8 * quantUnit,
               -0.85,
-              style === "sumie" && i === 0
+              leafSakuraMono
             );
           } else if (pad.r <= 38) {
-            // The Smallest Lotus Leaves (`r = 36` and `r = 38`): ONLY 1 single Sakura petal
             drawLeafPetal(
               cx + Math.cos(2.65 + i * 0.4) * (r * 0.46),
               cy + Math.sin(2.65 + i * 0.4) * (r * 0.46),
               7.4 * quantUnit,
               0.95 + i,
-              style === "sumie" && i === 3
+              leafSakuraMono
             );
           } else {
-            // Medium Lotus Leaves (`r = 42, 46, 50, 56, 62`): 2 well-separated single Sakura petals
             drawLeafPetal(
               cx + Math.cos(2.15 + i * 0.3) * (r * 0.54),
               cy + Math.sin(2.15 + i * 0.3) * (r * 0.54),
               7.8 * quantUnit,
               0.65 + i,
-              style === "sumie"
+              leafSakuraMono
             );
             drawLeafPetal(
               cx + Math.cos(4.05 + i * 0.3) * (r * 0.50),
               cy + Math.sin(4.05 + i * 0.3) * (r * 0.50),
               7.4 * quantUnit,
               -1.15 + i,
-              style === "sumie" && i % 2 === 0
+              leafSakuraMono
             );
           }
         }
@@ -3129,17 +3359,22 @@ export class AsciiKoiPondRenderer {
         }
         cCtx.restore();
 
-        // 4. Warm botanical rim
+        // 4. Warm botanical rim (bold deep sumi black ink border in Sumi-e)
         traceCompanion(0, 0, r);
-        cCtx.lineWidth = Math.max(0.6, 0.85 * quantUnit);
+        cCtx.lineWidth = style === "sumie" ? Math.max(1.45, 1.75 * quantUnit) : Math.max(0.6, 0.85 * quantUnit);
         cCtx.strokeStyle =
           style === "sumie"
-            ? "rgba(28, 24, 20, 0.55)"
+            ? "rgba(10, 9, 8, 0.94)"
             : "rgba(168, 142, 36, 0.58)";
         cCtx.stroke();
       }
       this.companionLeafSprites.push(cSprite);
     }
+    this.botanicalSpriteCacheMap.set(key, {
+      lotus: this.lotusLeafSprites,
+      companion: this.companionLeafSprites,
+      pinkLotus: this.pinkLotusSprites,
+    });
   }
 
   /**
@@ -3157,9 +3392,25 @@ export class AsciiKoiPondRenderer {
   ): void {
     const style = this.artStyle;
     const unit = koiClamp(Math.min(worldW, worldH) / 860, 0.48, 1.22);
-    this.ensureBotanicalSpriteCache(unit, isLight, style);
-    const resolvedPads = this.getResolvedLotusPads(worldW, worldH, unit);
+    const daylight = this.getDaylightFactor();
+    const blendDayNight = daylight > 0.002 && daylight < 0.998;
 
+    this.ensureBotanicalSpriteCache(unit, true, style);
+    const dayLotus = this.lotusLeafSprites;
+    const dayComp = this.companionLeafSprites;
+    const dayPink = this.pinkLotusSprites;
+
+    let nightLotus = dayLotus;
+    let nightComp = dayComp;
+    let nightPink = dayPink;
+    if (!isLight || blendDayNight) {
+      this.ensureBotanicalSpriteCache(unit, false, style);
+      nightLotus = this.lotusLeafSprites;
+      nightComp = this.companionLeafSprites;
+      nightPink = this.pinkLotusSprites;
+    }
+
+    const resolvedPads = this.getResolvedLotusPads(worldW, worldH, unit);
     const companionLeaves = this.getResolvedCompanionLeaves(worldW, worldH, unit, resolvedPads);
 
     ctx.save();
@@ -3167,49 +3418,70 @@ export class AsciiKoiPondRenderer {
     for (let cIdx = 0; cIdx < companionLeaves.length; cIdx++) {
       const comp = companionLeaves[cIdx];
       const st = this.lotusPadStates[comp.parentIdx];
+      const cst = this.companionLeafStates[cIdx];
       const cPhase = st.leafPhase * 1.08 + cIdx * 0.85;
-      const ampBoost = 1.0 + st.excite * 1.55;
-      const swayX = Math.sin(cPhase) * 2.5 * unit * ampBoost + st.swayX * 0.90;
-      const swayY = Math.cos(cPhase * 0.86 + cIdx) * 2.0 * unit * ampBoost + st.swayY * 0.90;
+      const ampBoost = 1.0 + st.excite * 0.22;
+      const swayX = Math.sin(cPhase) * 2.5 * unit * ampBoost + st.swayX * 0.90 + (cst ? cst.dispX : 0);
+      const swayY = Math.cos(cPhase * 0.86 + cIdx) * 2.0 * unit * ampBoost + st.swayY * 0.90 + (cst ? cst.dispY : 0);
       const cx = comp.x + swayX;
       const cy = comp.y + swayY;
       const notchAngle =
         comp.notch +
-        Math.sin(cPhase * 0.62) * (0.045 + st.excite * 0.05) +
+        Math.sin(cPhase * 0.62) * (0.025 + st.excite * 0.015) +
         st.rotOffset * 0.92;
 
-      const cSprite = this.companionLeafSprites[cIdx];
-      if (cSprite) {
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.rotate(notchAngle);
-        ctx.drawImage(cSprite, -cSprite.width * 0.5, -cSprite.height * 0.5);
-        ctx.restore();
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(notchAngle);
+      if (blendDayNight) {
+        const dSpr = dayComp[cIdx];
+        const nSpr = nightComp[cIdx];
+        if (dSpr) ctx.drawImage(dSpr, -dSpr.width * 0.5, -dSpr.height * 0.5);
+        if (nSpr) {
+          ctx.globalAlpha = 1.0 - daylight;
+          ctx.drawImage(nSpr, -nSpr.width * 0.5, -nSpr.height * 0.5);
+        }
+      } else {
+        const cSprite = (daylight >= 0.5 ? dayComp : nightComp)[cIdx];
+        if (cSprite) {
+          ctx.drawImage(cSprite, -cSprite.width * 0.5, -cSprite.height * 0.5);
+        }
       }
+      ctx.restore();
     }
 
     // PASS 4B: Draw all 9 Large Lotus Leaf blades over their stem tips (concealing central navel hub joints)
     for (let i = 0; i < resolvedPads.length; i++) {
       const pad = resolvedPads[i];
       const st = this.lotusPadStates[i];
-      const ampBoost = 1.0 + st.excite * 1.65;
-      const swayX = Math.sin(st.leafPhase) * 3.0 * unit * ampBoost + st.swayX;
-      const swayY = Math.cos(st.leafPhase * 0.84 + i) * 2.4 * unit * ampBoost + st.swayY;
+      const ampBoost = 1.0 + st.excite * 0.22;
+      const swayX = Math.sin(st.leafPhase) * 3.0 * unit * ampBoost + st.swayX + st.dispX;
+      const swayY = Math.cos(st.leafPhase * 0.84 + i) * 2.4 * unit * ampBoost + st.swayY + st.dispY;
       const cx = pad.x + swayX;
       const cy = pad.y + swayY;
       const notchAngle =
         pad.notch +
-        Math.sin(st.leafPhase * 0.58) * (0.04 + st.excite * 0.055) +
+        Math.sin(st.leafPhase * 0.58) * (0.025 + st.excite * 0.015) +
         st.rotOffset;
 
-      const sprite = this.lotusLeafSprites[i];
-      if (sprite) {
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.rotate(notchAngle);
-        ctx.drawImage(sprite, -sprite.width * 0.5, -sprite.height * 0.5);
-        ctx.restore();
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(notchAngle);
+      if (blendDayNight) {
+        const dSpr = dayLotus[i];
+        const nSpr = nightLotus[i];
+        if (dSpr) ctx.drawImage(dSpr, -dSpr.width * 0.5, -dSpr.height * 0.5);
+        if (nSpr) {
+          ctx.globalAlpha = 1.0 - daylight;
+          ctx.drawImage(nSpr, -nSpr.width * 0.5, -nSpr.height * 0.5);
+        }
+      } else {
+        const sprite = (daylight >= 0.5 ? dayLotus : nightLotus)[i];
+        if (sprite) {
+          ctx.drawImage(sprite, -sprite.width * 0.5, -sprite.height * 0.5);
+        }
       }
+      ctx.restore();
     }
 
     // PASS 2: Draw all Blooming Pink Lotuses ON TOP of all lotus leaves
@@ -3218,19 +3490,32 @@ export class AsciiKoiPondRenderer {
       const pad = resolvedPads[i];
       if (!pad.hasLotus) continue;
       const st = this.lotusPadStates[i];
-      const lagAmp = 1.0 + st.excite * 1.75;
-      const flSwayX = Math.sin(st.flowerPhase) * 3.8 * unit * lagAmp + st.swayX * 1.18;
-      const flSwayY = Math.cos(st.flowerPhase * 0.84 + i) * 3.1 * unit * lagAmp + st.swayY * 1.18;
+      const lagAmp = 1.0 + st.excite * 0.24;
+      const flSwayX = Math.sin(st.flowerPhase) * 3.8 * unit * lagAmp + st.swayX * 1.18 + st.dispX;
+      const flSwayY = Math.cos(st.flowerPhase * 0.84 + i) * 3.1 * unit * lagAmp + st.swayY * 1.18 + st.dispY;
       const baseNotch =
         pad.notch +
-        Math.sin(st.flowerPhase * 0.58) * (0.04 + st.excite * 0.055) +
+        Math.sin(st.flowerPhase * 0.58) * (0.025 + st.excite * 0.015) +
         st.rotOffset * 1.12;
       const flX = pad.x + flSwayX + Math.cos(baseNotch + 0.35) * (pad.r * 0.78);
       const flY = pad.y + flSwayY + Math.sin(baseNotch + 0.35) * (pad.r * 0.78);
 
-      const flSprite = this.pinkLotusSprites[flowerIdx++];
-      if (flSprite) {
-        ctx.drawImage(flSprite, flX - flSprite.width * 0.5, flY - flSprite.height * 0.5);
+      const curFlowerIdx = flowerIdx++;
+      if (blendDayNight) {
+        const dFl = dayPink[curFlowerIdx];
+        const nFl = nightPink[curFlowerIdx];
+        if (dFl) ctx.drawImage(dFl, flX - dFl.width * 0.5, flY - dFl.height * 0.5);
+        if (nFl) {
+          ctx.save();
+          ctx.globalAlpha = 1.0 - daylight;
+          ctx.drawImage(nFl, flX - nFl.width * 0.5, flY - nFl.height * 0.5);
+          ctx.restore();
+        }
+      } else {
+        const flSprite = (daylight >= 0.5 ? dayPink : nightPink)[curFlowerIdx];
+        if (flSprite) {
+          ctx.drawImage(flSprite, flX - flSprite.width * 0.5, flY - flSprite.height * 0.5);
+        }
       }
     }
     ctx.restore();
@@ -3286,24 +3571,37 @@ export class AsciiKoiPondRenderer {
 
         const pGrad = ctx.createLinearGradient(0, 0, pLen, 0);
         if (style === "sumie") {
-          // Delicate rice-paper ivory petals with soft hanko cinnabar-blush tips in Sumi-e
-          pGrad.addColorStop(0.0, isLight ? "rgba(218, 208, 194, 0.96)" : "rgba(168, 160, 148, 0.95)");
-          pGrad.addColorStop(0.68, isLight ? "rgba(244, 236, 224, 0.98)" : "rgba(212, 202, 188, 0.96)");
-          pGrad.addColorStop(1.0, "rgba(196, 62, 48, 0.92)");
+          pGrad.addColorStop(0.0, isLight ? "rgba(218, 208, 194, 0.96)" : "rgba(118, 120, 126, 0.95)");
+          pGrad.addColorStop(0.68, isLight ? "rgba(244, 236, 224, 0.98)" : "rgba(166, 168, 174, 0.96)");
+          pGrad.addColorStop(1.0, isLight ? "rgba(196, 62, 48, 0.92)" : "rgba(138, 66, 64, 0.88)");
+        } else if (!isLight) {
+          if (tier === 0) {
+            pGrad.addColorStop(0.0, "rgba(112, 66, 102, 0.96)");
+            pGrad.addColorStop(0.55, "rgba(148, 108, 146, 0.98)");
+            pGrad.addColorStop(0.88, "rgba(182, 164, 196, 0.98)");
+            pGrad.addColorStop(1.0, "rgba(138, 90, 128, 0.98)");
+          } else if (tier === 1) {
+            pGrad.addColorStop(0.0, "rgba(118, 58, 96, 0.98)");
+            pGrad.addColorStop(0.52, "rgba(154, 102, 142, 0.99)");
+            pGrad.addColorStop(0.86, "rgba(192, 174, 206, 0.99)");
+            pGrad.addColorStop(1.0, "rgba(134, 78, 118, 0.99)");
+          } else {
+            pGrad.addColorStop(0.0, "rgba(136, 84, 96, 0.98)");
+            pGrad.addColorStop(0.48, "rgba(156, 98, 138, 0.99)");
+            pGrad.addColorStop(0.88, "rgba(198, 182, 212, 0.99)");
+            pGrad.addColorStop(1.0, "rgba(132, 72, 114, 0.99)");
+          }
         } else if (tier === 0) {
-          // Outer ring: soft rose-pink base -> luminous blush -> warm ivory-pink tip
           pGrad.addColorStop(0.0, "rgba(208, 86, 122, 0.96)");
           pGrad.addColorStop(0.55, "rgba(242, 158, 184, 0.98)");
           pGrad.addColorStop(0.88, "rgba(252, 214, 226, 0.98)");
           pGrad.addColorStop(1.0, "rgba(232, 112, 148, 0.98)");
         } else if (tier === 1) {
-          // Middle ring: richer carmine-rose -> vibrant lotus pink -> radiant blush tip
           pGrad.addColorStop(0.0, "rgba(216, 72, 114, 0.98)");
           pGrad.addColorStop(0.52, "rgba(246, 138, 172, 0.99)");
           pGrad.addColorStop(0.86, "rgba(254, 222, 234, 0.99)");
           pGrad.addColorStop(1.0, "rgba(224, 88, 132, 0.99)");
         } else {
-          // Inner crown ring: warm golden-pink base -> rich pink -> delicate pale tip
           pGrad.addColorStop(0.0, "rgba(236, 126, 98, 0.98)");
           pGrad.addColorStop(0.48, "rgba(244, 124, 162, 0.99)");
           pGrad.addColorStop(0.88, "rgba(255, 228, 238, 0.99)");
@@ -3312,14 +3610,12 @@ export class AsciiKoiPondRenderer {
         ctx.fillStyle = pGrad;
         ctx.fill();
 
-        // Subtle petal outline & central vein
-        ctx.lineWidth = false ? 1.1 : 0.65;
+        // Crisp Sumi-e deep black ink petal outline; delicate rose outline in Mokkotsu
+        ctx.lineWidth = style === "sumie" ? 1.35 : 0.65;
         ctx.strokeStyle =
-          false
-            ? "rgba(28, 20, 16, 0.72)"
-            : style === "sumie"
-              ? "rgba(58, 48, 42, 0.38)"
-              : "rgba(182, 58, 94, 0.36)";
+          style === "sumie"
+            ? "rgba(10, 9, 8, 0.92)"
+            : "rgba(182, 58, 94, 0.36)";
         ctx.stroke();
 
         ctx.beginPath();
@@ -3483,33 +3779,151 @@ export class AsciiKoiPondRenderer {
    * - When the flashlight is enabled in Dark Mode and sweeps over a Koi, that Koi smoothly
    *   brightens up to `~0.84` inside the warm lantern beam.
    */
-  private computeKoiExposure(fish: KoiFish, isLight: boolean): number {
+  private computeKoiExposure(fish: KoiFish, _isLight: boolean): number {
     const daylight = this.getDaylightFactor();
-    if (isLight && daylight >= 0.995) {
+    if (daylight >= 0.995) {
       return 1.0;
     }
     const midNode = fish.spine[Math.min(8, fish.spine.length - 1)] ?? fish.spine[0];
-    const baseNightLuma = 0.30;
-    const beamNightLuma = 0.56;
-    if (isLight) {
-      // Smooth dusk/dawn transition between beamNightLuma (at daylight=0) and 1.0 (at daylight=1)
-      return beamNightLuma + (1.0 - beamNightLuma) * Math.pow(daylight, 0.82);
-    }
-    // Dark mode:
-    // - When the flashlight spotlight is OFF (`easeDisp = 1`), the spotlight veil lifts so the full
-    //   night pond is visible, and all Koi sit at the toned-down night exposure (`beamNightLuma = 0.56`).
-    // - When the flashlight spotlight is ON (`easeDisp = 0`), Koi inside the beam are `0.56`
-    //   and Koi outside the beam dim further to `baseNightLuma = 0.32`.
+    // Blend koi naturally into the night water when dark, brightening smoothly inside the flashlight beam
+    const baseNightLuma = 0.24;
+    const beamNightLuma = 0.46;
     const easeDisp = koiSmoothstep(0, 1, this.flashlightDispersal);
-    if (easeDisp >= 0.99 || this.flashX < 0 || this.flashY < 0) {
-      return beamNightLuma;
+    let nightLuma = beamNightLuma;
+    if (easeDisp < 0.99 && this.flashX >= 0 && this.flashY >= 0) {
+      const baseR = this.getFlashlightBaseRadius(this.activeRect.w || 1440, this.activeRect.h || 900);
+      const dist = Math.hypot(midNode.x - this.flashX, midNode.y - this.flashY);
+      const normDist = koiClamp(dist / (baseR * 0.92), 0, 1);
+      const spotFactor = Math.pow(1.0 - normDist, 1.55);
+      const spotlightLuma = baseNightLuma + (beamNightLuma - baseNightLuma) * spotFactor;
+      nightLuma = koiLerp(spotlightLuma, beamNightLuma, easeDisp);
     }
-    const baseR = this.getFlashlightBaseRadius(this.activeRect.w || 1440, this.activeRect.h || 900);
-    const dist = Math.hypot(midNode.x - this.flashX, midNode.y - this.flashY);
-    const normDist = koiClamp(dist / (baseR * 0.92), 0, 1);
-    const spotFactor = Math.pow(1.0 - normDist, 1.55);
-    const spotlightLuma = baseNightLuma + (beamNightLuma - baseNightLuma) * spotFactor;
-    return koiLerp(spotlightLuma, beamNightLuma, easeDisp);
+    if (daylight <= 0.005) {
+      return nightLuma;
+    }
+    return koiLerp(nightLuma, 1.0, Math.pow(daylight, 0.78));
+  }
+
+  /**
+   * Blends a koi pigment RGB smoothly with the dark night-water ambient tone
+   * based on `koiExposure` so fish settle naturally into the night pond.
+   */
+  private applyNightWaterBlend(
+    rgb: [number, number, number],
+    koiExposure: number
+  ): [number, number, number] {
+    const nightWaterTint: [number, number, number] = [20, 24, 21];
+    const lit = darkenRgb(rgb, koiClamp(koiExposure, 0.22, 1.0));
+    const nightAmt = koiClamp((1.0 - koiExposure) * 0.55, 0, 0.55);
+    return mixRgb(lit, nightWaterTint, nightAmt);
+  }
+
+  private sampleSpineFrame(
+    fish: KoiFish,
+    s: number
+  ): { x: number; y: number; tx: number; ty: number; nx: number; ny: number } {
+    const spine = fish.spine;
+    const n = spine.length;
+    const maxS = spine[n - 1]?.s || 0.83;
+    const clamped = koiClamp(s, 0, maxS);
+    const fIdx = (clamped / Math.max(0.001, maxS)) * (n - 1);
+    const i0 = Math.min(n - 2, Math.max(0, Math.floor(fIdx)));
+    const i1 = i0 + 1;
+    const t = koiClamp(fIdx - i0, 0, 1);
+    const a = spine[i0];
+    const b = spine[i1];
+    const txRaw = a.tx + (b.tx - a.tx) * t;
+    const tyRaw = a.ty + (b.ty - a.ty) * t;
+    const tLen = Math.hypot(txRaw, tyRaw) || 1;
+    const tx = txRaw / tLen;
+    const ty = tyRaw / tLen;
+    return {
+      x: a.x + (b.x - a.x) * t,
+      y: a.y + (b.y - a.y) * t,
+      tx,
+      ty,
+      nx: -ty,
+      ny: tx,
+    };
+  }
+
+  /**
+   * Continuous, fluid calligraphic Sumi-e brush ribbon helper.
+   * Sweeps ONE unbroken, boldly pressure-modulated ink ribbon (0.45x to 1.85x) tapering smoothly
+   * to sharp hairline ends — eliminating pinched sausage segments while preserving authentic sumi brushwork.
+   */
+  private strokeCalligraphicPolyline(
+    ctx: CanvasRenderingContext2D,
+    pts: Array<{ x: number; y: number }>,
+    baseWidth: number,
+    rgb: [number, number, number],
+    alpha: number,
+    seed: number,
+    closed = false
+  ): void {
+    const count = pts.length;
+    if (count < 3) return;
+
+    const sub: Array<{ x: number; y: number }> = [];
+    const lim = closed ? count : count - 1;
+    for (let i = 0; i < lim; i++) {
+      const a = pts[i];
+      const b = pts[(i + 1) % count];
+      sub.push(a);
+      sub.push({ x: (a.x + b.x) * 0.5, y: (a.y + b.y) * 0.5 });
+    }
+    if (!closed) sub.push(pts[count - 1]);
+
+    const m = sub.length;
+    const leftSide: Array<{ x: number; y: number }> = [];
+    const rightSide: Array<{ x: number; y: number }> = [];
+
+    for (let i = 0; i < m; i++) {
+      const prev = sub[closed ? (i - 1 + m) % m : Math.max(0, i - 1)];
+      const cur = sub[i];
+      const nxt = sub[closed ? (i + 1) % m : Math.min(m - 1, i + 1)];
+      const dx1 = cur.x - prev.x;
+      const dy1 = cur.y - prev.y;
+      const dx2 = nxt.x - cur.x;
+      const dy2 = nxt.y - cur.y;
+      const l1 = Math.hypot(dx1, dy1) || 1;
+      const l2 = Math.hypot(dx2, dy2) || 1;
+      const tx = (dx1 / l1 + dx2 / l2) * 0.5;
+      const ty = (dy1 / l1 + dy2 / l2) * 0.5;
+      const tLen = Math.hypot(tx, ty) || 1;
+      const nx = -ty / tLen;
+      const ny = tx / tLen;
+
+      const dot = koiClamp((dx1 * dx2 + dy1 * dy2) / (l1 * l2), -1, 1);
+      const bend = Math.sqrt(Math.max(0, 1 - dot));
+      const tGlob = i / Math.max(1, m - 1);
+      const endEnv = closed ? 1.0 : Math.pow(Math.sin(Math.max(0.02, Math.min(0.98, tGlob)) * Math.PI), 0.45);
+      const breath = 0.62 + 0.58 * (0.5 + 0.5 * Math.sin(tGlob * Math.PI * 3.4 + seed * 0.8));
+      const pressure = Math.min(1.95, breath + bend * 2.6);
+      const halfW = Math.max(0.45, baseWidth * 0.52 * pressure * (0.28 + 0.72 * endEnv));
+
+      leftSide.push({ x: cur.x + nx * halfW, y: cur.y + ny * halfW });
+      rightSide.push({ x: cur.x - nx * halfW, y: cur.y - ny * halfW });
+    }
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(leftSide[0].x, leftSide[0].y);
+    for (let i = 1; i < leftSide.length; i++) ctx.lineTo(leftSide[i].x, leftSide[i].y);
+    if (closed) {
+      ctx.closePath();
+      ctx.moveTo(rightSide[rightSide.length - 1].x, rightSide[rightSide.length - 1].y);
+      for (let i = rightSide.length - 2; i >= 0; i--) ctx.lineTo(rightSide[i].x, rightSide[i].y);
+      ctx.closePath();
+      ctx.fillStyle = rgbToRgba(rgb, alpha);
+      ctx.fill("evenodd");
+    } else {
+      for (let i = rightSide.length - 1; i >= 0; i--) ctx.lineTo(rightSide[i].x, rightSide[i].y);
+      ctx.closePath();
+      ctx.fillStyle = rgbToRgba(rgb, alpha);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   private paintLivingKoi(
@@ -3517,12 +3931,13 @@ export class AsciiKoiPondRenderer {
     fish: KoiFish,
     isLight: boolean,
     showScales: boolean,
-    zDepth = 0.25
+    _zDepth = 0.25
   ): void {
     const style = this.artStyle;
+    const isSumie = style === "sumie";
     const spine = fish.spine;
     const n = spine.length;
-    if (n < 4) return;
+    if (n < 10) return;
 
     for (let i = 0; i < n; i++) {
       const node = spine[i];
@@ -3537,748 +3952,976 @@ export class AsciiKoiPondRenderer {
     const head = spine[0];
     const n1 = spine[1];
     const hw1 = koiBodyHalfWidth(n1.s, fish.maxHalfWidth);
-    // Circular, blunt C1-continuous snout dome (never conical or pinched)
-    const snoutTipX = head.x + head.tx * (hw1 * 0.20);
-    const snoutTipY = head.y + head.ty * (hw1 * 0.20);
+    // Protruding smooth rounded anterior nose lip dome (zero flat corners, fuller ovoid nose!)
+    const domeRy = hw1 * 0.92;
+    const snoutTipX = n1.x + head.tx * domeRy;
+    const snoutTipY = n1.y + head.ty * domeRy;
 
     const tail = spine[n - 1];
     const tailHw = koiBodyHalfWidth(tail.s, fish.maxHalfWidth);
-    const rootNode = spine[n - 2];
-    const rootHw = koiBodyHalfWidth(rootNode.s, fish.maxHalfWidth) * 0.94;
-    // Compact, sway-coupled caudal peduncle cap (`tailHw * 0.32`) that blends seamlessly into the caudal fin root
-    const tailSway = Math.sin(fish.phase - 1.9) * fish.maxHalfWidth * 0.48;
+    const tailSway = Math.sin(fish.phase - 1.9) * fish.maxHalfWidth * 0.22;
     const peduncleTipX =
-      tail.x - tail.tx * (tailHw * 0.32) + tail.nx * (tailSway * 0.24);
+      tail.x - tail.tx * (tailHw * 0.28) + tail.nx * (tailSway * 0.12);
     const peduncleTipY =
-      tail.y - tail.ty * (tailHw * 0.32) + tail.ny * (tailSway * 0.24);
+      tail.y - tail.ty * (tailHw * 0.28) + tail.ny * (tailSway * 0.12);
+
+    const buildRightFlankPts = (scaleWidth = 1.0): Array<{ x: number; y: number }> => {
+      const pts: Array<{ x: number; y: number }> = [];
+      for (let d = 0; d <= 5; d++) {
+        const a = Math.PI * 0.5 * (1 - d / 5);
+        const lx = Math.cos(a) * hw1 * scaleWidth;
+        const fy = Math.sin(a) * domeRy;
+        pts.push({
+          x: n1.x + head.nx * lx + head.tx * fy,
+          y: n1.y + head.ny * lx + head.ty * fy,
+        });
+      }
+      for (let i = 2; i < n; i++) {
+        const hw = koiBodyHalfWidth(Math.max(0.012, spine[i].s), fish.maxHalfWidth) * scaleWidth;
+        pts.push({ x: spine[i].x + spine[i].nx * hw, y: spine[i].y + spine[i].ny * hw });
+      }
+      return pts;
+    };
+
+    const buildLeftFlankPts = (scaleWidth = 1.0): Array<{ x: number; y: number }> => {
+      const pts: Array<{ x: number; y: number }> = [];
+      for (let d = 0; d <= 5; d++) {
+        const a = Math.PI * 0.5 * (1 - d / 5);
+        const lx = Math.cos(a) * hw1 * scaleWidth;
+        const fy = Math.sin(a) * domeRy;
+        pts.push({
+          x: n1.x - head.nx * lx + head.tx * fy,
+          y: n1.y - head.ny * lx + head.ty * fy,
+        });
+      }
+      for (let i = 2; i < n; i++) {
+        const hw = koiBodyHalfWidth(Math.max(0.012, spine[i].s), fish.maxHalfWidth) * scaleWidth;
+        pts.push({ x: spine[i].x - spine[i].nx * hw, y: spine[i].y - spine[i].ny * hw });
+      }
+      return pts;
+    };
+
+    const buildContourPts = (scaleWidth = 1.0): Array<{ x: number; y: number }> => {
+      const rPts = buildRightFlankPts(scaleWidth);
+      const lPts = buildLeftFlankPts(scaleWidth);
+      const pts: Array<{ x: number; y: number }> = [...rPts, { x: peduncleTipX, y: peduncleTipY }];
+      for (let i = lPts.length - 1; i >= 1; i--) pts.push(lPts[i]);
+      return pts;
+    };
 
     const traceBodyContour = (offsetX = 0, offsetY = 0, scaleWidth = 1.0) => {
+      const pts = buildContourPts(scaleWidth);
       ctx.beginPath();
-      ctx.moveTo(snoutTipX + offsetX, snoutTipY + offsetY);
-
-      const r1x = n1.x + n1.nx * hw1 * scaleWidth + offsetX;
-      const r1y = n1.y + n1.ny * hw1 * scaleWidth + offsetY;
-      // Cubic Bezier leaving snoutTip strictly perpendicular to head.t (`±head.n`) for a circular, non-conical snout arch
-      ctx.bezierCurveTo(
-        snoutTipX + head.nx * (hw1 * 0.64 * scaleWidth) + offsetX,
-        snoutTipY + head.ny * (hw1 * 0.64 * scaleWidth) + offsetY,
-        head.x + head.nx * (hw1 * 0.96 * scaleWidth) + offsetX,
-        head.y + head.ny * (hw1 * 0.96 * scaleWidth) + offsetY,
-        r1x,
-        r1y
-      );
-
-      for (let i = 2; i < n; i++) {
-        const node = spine[i];
-        const hw = koiBodyHalfWidth(node.s, fish.maxHalfWidth) * scaleWidth;
-        const rx = node.x + node.nx * hw + offsetX;
-        const ry = node.y + node.ny * hw + offsetY;
-        const prev = spine[i - 1];
-        const prevHw = koiBodyHalfWidth(prev.s, fish.maxHalfWidth) * scaleWidth;
-        const prx = prev.x + prev.nx * prevHw + offsetX;
-        const pry = prev.y + prev.ny * prevHw + offsetY;
-        ctx.quadraticCurveTo(prx, pry, (prx + rx) * 0.5, (pry + ry) * 0.5);
+      for (let i = 0; i < pts.length; i++) {
+        const cur = pts[i];
+        const nxt = pts[(i + 1) % pts.length];
+        const mx = (cur.x + nxt.x) * 0.5 + offsetX;
+        const my = (cur.y + nxt.y) * 0.5 + offsetY;
+        if (i === 0) {
+          const prev = pts[pts.length - 1];
+          ctx.moveTo((prev.x + cur.x) * 0.5 + offsetX, (prev.y + cur.y) * 0.5 + offsetY);
+        }
+        ctx.quadraticCurveTo(cur.x + offsetX, cur.y + offsetY, mx, my);
       }
-
-      const thw = tailHw * scaleWidth;
-      ctx.quadraticCurveTo(
-        tail.x + tail.nx * (thw * 0.88 + tailSway * 0.14) + offsetX,
-        tail.y + tail.ny * (thw * 0.88 + tailSway * 0.14) + offsetY,
-        peduncleTipX + offsetX,
-        peduncleTipY + offsetY
-      );
-      ctx.quadraticCurveTo(
-        tail.x - tail.nx * (thw * 0.88 - tailSway * 0.14) + offsetX,
-        tail.y - tail.ny * (thw * 0.88 - tailSway * 0.14) + offsetY,
-        tail.x - tail.nx * thw + offsetX,
-        tail.y - tail.ny * thw + offsetY
-      );
-
-      for (let i = n - 2; i >= 1; i--) {
-        const node = spine[i];
-        const hw = koiBodyHalfWidth(node.s, fish.maxHalfWidth) * scaleWidth;
-        const lx = node.x - node.nx * hw + offsetX;
-        const ly = node.y - node.ny * hw + offsetY;
-        const next = spine[i + 1];
-        const nextHw = koiBodyHalfWidth(next.s, fish.maxHalfWidth) * scaleWidth;
-        const nlx = next.x - next.nx * nextHw + offsetX;
-        const nly = next.y - next.ny * nextHw + offsetY;
-        ctx.quadraticCurveTo(nlx, nly, (nlx + lx) * 0.5, (nly + ly) * 0.5);
-      }
-
-      const l1x = n1.x - n1.nx * hw1 * scaleWidth + offsetX;
-      const l1y = n1.y - n1.ny * hw1 * scaleWidth + offsetY;
-      ctx.lineTo(l1x, l1y);
-      ctx.bezierCurveTo(
-        head.x - head.nx * (hw1 * 0.96 * scaleWidth) + offsetX,
-        head.y - head.ny * (hw1 * 0.96 * scaleWidth) + offsetY,
-        snoutTipX - head.nx * (hw1 * 0.64 * scaleWidth) + offsetX,
-        snoutTipY - head.ny * (hw1 * 0.64 * scaleWidth) + offsetY,
-        snoutTipX + offsetX,
-        snoutTipY + offsetY
-      );
       ctx.closePath();
     };
 
-    /**
-     * Traces a single continuous open-tail stroke from the left peduncle root up the left flank,
-     * smoothly around the circular cubic-Bezier snout dome, and down the right flank to the right peduncle root.
-     */
-    const strokeBodyFlanksOpenTail = () => {
-      ctx.beginPath();
-      ctx.moveTo(rootNode.x - rootNode.nx * rootHw, rootNode.y - rootNode.ny * rootHw);
-      for (let i = n - 2; i >= 1; i--) {
-        const node = spine[i];
-        const hw = koiBodyHalfWidth(node.s, fish.maxHalfWidth);
-        const lx = node.x - node.nx * hw;
-        const ly = node.y - node.ny * hw;
-        const next = spine[i + 1];
-        const nextHw = koiBodyHalfWidth(next.s, fish.maxHalfWidth);
-        const nlx = next.x - next.nx * nextHw;
-        const nly = next.y - next.ny * nextHw;
-        ctx.quadraticCurveTo(nlx, nly, (nlx + lx) * 0.5, (nly + ly) * 0.5);
-      }
-      ctx.lineTo(n1.x - n1.nx * hw1, n1.y - n1.ny * hw1);
-      ctx.bezierCurveTo(
-        head.x - head.nx * (hw1 * 0.96),
-        head.y - head.ny * (hw1 * 0.96),
-        snoutTipX - head.nx * (hw1 * 0.64),
-        snoutTipY - head.ny * (hw1 * 0.64),
-        snoutTipX,
-        snoutTipY
-      );
-      ctx.bezierCurveTo(
-        snoutTipX + head.nx * (hw1 * 0.64),
-        snoutTipY + head.ny * (hw1 * 0.64),
-        head.x + head.nx * (hw1 * 0.96),
-        head.y + head.ny * (hw1 * 0.96),
-        n1.x + n1.nx * hw1,
-        n1.y + n1.ny * hw1
-      );
-      for (let i = 2; i <= n - 2; i++) {
-        const node = spine[i];
-        const hw = koiBodyHalfWidth(node.s, fish.maxHalfWidth);
-        const rx = node.x + node.nx * hw;
-        const ry = node.y + node.ny * hw;
-        const prev = spine[i - 1];
-        const prevHw = koiBodyHalfWidth(prev.s, fish.maxHalfWidth);
-        const prx = prev.x + prev.nx * prevHw;
-        const pry = prev.y + prev.ny * prevHw;
-        ctx.quadraticCurveTo(prx, pry, (prx + rx) * 0.5, (pry + ry) * 0.5);
-      }
-      ctx.lineTo(rootNode.x + rootNode.nx * rootHw, rootNode.y + rootNode.ny * rootHw);
-      ctx.stroke();
+    const koiDaylight = this.getDaylightFactor();
+    const koiNightFrac = 1.0 - koiDaylight;
+    const exposure = this.computeKoiExposure(fish, isLight);
+    const nightDepth = koiNightFrac * koiClamp(1 - (exposure - 0.55) / 0.8, 0.15, 1.0);
+    const nightWaterTint: [number, number, number] = [14, 30, 48];
+    const blendNight = (rgb: [number, number, number], strength = 0.34): [number, number, number] => {
+      if (nightDepth <= 0.001) return rgb;
+      const k = nightDepth * strength;
+      return [
+        Math.round(rgb[0] * (1 - k) + nightWaterTint[0] * k),
+        Math.round(rgb[1] * (1 - k) + nightWaterTint[1] * k),
+        Math.round(rgb[2] * (1 - k) + nightWaterTint[2] * k),
+      ];
     };
 
-    // Compute opaque ambient/flashlight exposure multiplier [0.38..1.0] so Koi at night are
-    // naturally darkened by lack of light (without any transparency) and brighten inside the flashlight beam
-    const koiExposure = this.computeKoiExposure(fish, isLight);
+    const shiroBase: [number, number, number] = isSumie ? [248, 242, 232] : [248, 238, 220];
+    const hiBase: [number, number, number] = isSumie ? [242, 46, 8] : [244, 66, 8];
+    const sumiBase: [number, number, number] = isSumie ? [12, 12, 14] : [14, 14, 16];
 
-    // Determine pigments upfront so caudal fin root blends seamlessly with the peduncle
-    let shiroPigment: [number, number, number] = [248, 240, 224];
-    let sumiPigment: [number, number, number] = [40, 34, 29];
-    let hiPigment: [number, number, number] = mixRgb(fish.colors.hiRgb, [196, 54, 32], 0.46);
+    const shiroPigment = blendNight(darkenRgb(shiroBase, koiLerp(0.90, 1.0, koiDaylight)), 0.32);
+    const hiPigment = blendNight(darkenRgb(hiBase, koiLerp(0.92, 1.0, koiDaylight)), 0.24);
+    const sumiPigment = blendNight(sumiBase, 0.18);
+    const dayOutlineRgb: [number, number, number] = isSumie ? [12, 11, 11] : [30, 20, 14];
+    const outlineRgb: [number, number, number] = mixRgb([5, 10, 16], dayOutlineRgb, koiDaylight);
+    const outlineWidth = Math.max(1.5, fish.maxHalfWidth * (isSumie ? 0.038 : 0.020));
 
-    if (style === "sumie") {
-      shiroPigment = [232, 226, 214];
-      sumiPigment = [22, 20, 18];
-      hiPigment = [198, 42, 28];
-    }
+    ctx.save();
+    // Koi body stays 100% opaque across both Day and Night
 
-    shiroPigment = darkenRgb(shiroPigment, koiExposure);
-    sumiPigment = darkenRgb(sumiPigment, Math.max(0.45, koiExposure));
-    hiPigment = darkenRgb(hiPigment, koiExposure);
+    // 1. Paired fins, caudal tail, and fleshy mustache-curved barbels BEHIND body
+    this.paintKoiPairedFins(ctx, fish, isLight, outlineRgb, nightDepth);
+    this.paintKoiCaudalFin(ctx, fish, isLight, shiroPigment, exposure);
+    this.paintKoiBarbels(ctx, fish, isLight, isSumie, shiroPigment, outlineRgb, nightDepth);
 
-    const basePigment = fish.variety === "showa" ? sumiPigment : shiroPigment;
-
-    // A. Broad 3-Curve Rounded Fan Pectoral & Ventral Fins + Sway-Coupled Bilobed Veil Caudal Fin
-    this.paintKoiPairedFins(ctx, fish, isLight, koiExposure);
-    this.paintKoiCaudalFin(ctx, fish, isLight, basePigment, koiExposure);
-
-    // B. 100% Opaque Body & Markings so nothing underneath the Koi ever bleeds through
+    // 2. Body silhouette clipped interior
     ctx.save();
     traceBodyContour(0, 0, 1.0);
     ctx.clip();
 
     const bodyGrad = ctx.createLinearGradient(snoutTipX, snoutTipY, peduncleTipX, peduncleTipY);
-    bodyGrad.addColorStop(0.0, rgbToRgba(darkenRgb(basePigment, 0.96), 1.0));
-    bodyGrad.addColorStop(0.22, rgbToRgba(basePigment, 1.0));
-    bodyGrad.addColorStop(0.78, rgbToRgba(darkenRgb(basePigment, 0.95), 1.0));
-    bodyGrad.addColorStop(1.0, rgbToRgba(darkenRgb(basePigment, 0.92), 1.0));
+    bodyGrad.addColorStop(0.0, rgbToRgba(darkenRgb(shiroPigment, 1.02), 1.0));
+    bodyGrad.addColorStop(0.30, rgbToRgba(shiroPigment, 1.0));
+    bodyGrad.addColorStop(0.82, rgbToRgba(darkenRgb(shiroPigment, 0.92), 1.0));
+    bodyGrad.addColorStop(1.0, rgbToRgba(darkenRgb(shiroPigment, 0.87), 1.0));
     ctx.fillStyle = bodyGrad;
     ctx.fillRect(
-      fish.bbox.minX - 24,
-      fish.bbox.minY - 24,
-      fish.bbox.maxX - fish.bbox.minX + 48,
-      fish.bbox.maxY - fish.bbox.minY + 48
+      fish.bbox.minX - 28,
+      fish.bbox.minY - 28,
+      fish.bbox.maxX - fish.bbox.minX + 56,
+      fish.bbox.maxY - fish.bbox.minY + 56
     );
 
-    // Dorsal markings with high contrast saturation
-    const maxPatches = style === "sumie" ? Math.min(2, fish.patches.length) : fish.patches.length;
-    for (let pIdx = 0; pIdx < maxPatches; pIdx++) {
-      const p = fish.patches[pIdx];
-      let patchRgb = hiPigment;
-      let patchAlpha = 0.95;
-
-      if (style === "sumie") {
-        patchRgb = pIdx === 0 ? hiPigment : sumiPigment;
-        patchAlpha = pIdx === 0 ? 0.94 : 0.82;
-      } else if (p.layer === "sumi") {
-        patchRgb = sumiPigment;
-        patchAlpha = 0.95;
-      } else if (p.layer === "shiro") {
-        patchRgb = shiroPigment;
-        patchAlpha = 0.92;
-      }
-
-      this.paintSpineOrganicPatch(ctx, fish, p, patchRgb, patchAlpha);
+    // 2A. Scaleless Cranial Shield (sCenter < 0.24): black Sumi mark on black-and-white Shiro Utsuri (id % 4 === 2)
+    const koiDesignId = ((fish.id % 4) + 4) % 4;
+    const headShieldPigment = koiDesignId === 2 ? sumiPigment : hiPigment;
+    for (let pIdx = 0; pIdx < fish.patches.length; pIdx++) {
+      const patch = fish.patches[pIdx];
+      if (patch.sCenter >= 0.24) continue;
+      this.paintSpineOrganicPatch(ctx, fish, patch, headShieldPigment, isLight, isSumie, true);
     }
 
-    // 100% Continuous, True-Gaussian 3D Cylindrical Contact Shadow & Dorsal Highlight Glaze:
-    // Uses `ctx.filter = "blur(...)"` directly on the perimeter contour stroke inside the Koi clip mask.
-    // Unlike `shadowBlur` (which leaves the stroke itself razor-sharp), `ctx.filter = "blur(...)"`
-    // blurs the stroke itself into a pure, continuous Gaussian gradient from the outer flank inward
-    // with ZERO discrete inner boundary and ZERO concentric rings!
+    // 2B. Curved posterior collar clip behind opercula
     ctx.save();
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-
-    const flankBlurPx = Math.max(5, Math.round(fish.maxHalfWidth * 0.36));
-    ctx.filter = `blur(${flankBlurPx}px)`;
-
-    // Pass 1A: Wide soft cylindrical volume gradient reaching inward from the flanks
-    traceBodyContour(0, 0, 1.04);
-    ctx.lineWidth = Math.max(6, fish.maxHalfWidth * 0.56);
-    ctx.strokeStyle = isLight ? "rgba(48, 30, 14, 0.48)" : "rgba(6, 4, 2, 0.64)";
-    ctx.stroke();
-
-    // Pass 1B: Deeper contact rim shading right along the outer body edge for strong 3D depth
-    const rimBlurPx = Math.max(3, Math.round(fish.maxHalfWidth * 0.20));
-    ctx.filter = `blur(${rimBlurPx}px)`;
-    traceBodyContour(0, 0, 1.02);
-    ctx.lineWidth = Math.max(4, fish.maxHalfWidth * 0.28);
-    ctx.strokeStyle = isLight ? "rgba(38, 22, 10, 0.44)" : "rgba(4, 2, 1, 0.58)";
-    ctx.stroke();
-
-    // Pass 2: True-Gaussian Spine-Bound Dorsal Highlight Glaze along `spine[1..n-3]`
-    const dorsalBlurPx = Math.max(4, Math.round(fish.maxHalfWidth * 0.28));
-    ctx.filter = `blur(${dorsalBlurPx}px)`;
+    const gCenter = this.sampleSpineFrame(fish, 0.268);
+    const gSide = this.sampleSpineFrame(fish, 0.296);
+    const gHw = koiBodyHalfWidth(0.296, fish.maxHalfWidth) * 1.45;
     ctx.beginPath();
-    ctx.moveTo(spine[1].x, spine[1].y);
-    for (let i = 2; i <= n - 3; i++) {
-      const prev = spine[i - 1];
-      const curr = spine[i];
-      ctx.quadraticCurveTo(
-        prev.x,
-        prev.y,
-        (prev.x + curr.x) * 0.5,
-        (prev.y + curr.y) * 0.5
+    ctx.moveTo(gSide.x - gSide.nx * gHw, gSide.y - gSide.ny * gHw);
+    ctx.quadraticCurveTo(
+      gCenter.x + gCenter.tx * (fish.maxHalfWidth * 0.18),
+      gCenter.y + gCenter.ty * (fish.maxHalfWidth * 0.18),
+      gSide.x + gSide.nx * gHw,
+      gSide.y + gSide.ny * gHw
+    );
+    ctx.lineTo(tail.x + tail.nx * gHw * 1.4 - tail.tx * fish.maxHalfWidth * 1.2, tail.y + tail.ny * gHw * 1.4 - tail.ty * fish.maxHalfWidth * 1.2);
+    ctx.lineTo(tail.x - tail.nx * gHw * 1.4 - tail.tx * fish.maxHalfWidth * 1.2, tail.y - tail.ny * gHw * 1.4 - tail.ty * fish.maxHalfWidth * 1.2);
+    ctx.closePath();
+    ctx.clip();
+
+    if (isSumie) {
+      for (const targetLayer of ["hi", "sumi"] as const) {
+        for (let pIdx = 0; pIdx < fish.patches.length; pIdx++) {
+          const patch = fish.patches[pIdx];
+          if (patch.sCenter < 0.24 || patch.layer !== targetLayer) continue;
+          const col = koiDesignId === 2 ? sumiPigment : (targetLayer === "sumi" ? sumiPigment : hiPigment);
+          this.paintSpineOrganicPatch(ctx, fish, patch, col, isLight, true, false);
+        }
+      }
+    }
+
+    // 2C. Uroko scales
+    if (showScales) {
+      this.paintCalligraphicScales(
+        ctx,
+        fish,
+        isLight,
+        isSumie,
+        shiroPigment,
+        hiPigment,
+        sumiPigment,
+        outlineRgb
       );
     }
-    ctx.lineTo(spine[n - 3].x, spine[n - 3].y);
-    ctx.lineWidth = Math.max(4, fish.maxHalfWidth * 0.36);
-    const hlR = Math.round(255 * koiExposure);
-    const hlG = Math.round(250 * koiExposure);
-    const hlB = Math.round(236 * koiExposure);
-    ctx.strokeStyle = `rgba(${hlR}, ${hlG}, ${hlB}, ${((isLight ? 0.32 : 0.26) * koiExposure).toFixed(3)})`;
-    ctx.stroke();
-
-    ctx.filter = "none";
     ctx.restore();
 
-    if (showScales || false) {
-      this.paintCalligraphicScales(ctx, fish, isLight, koiExposure);
+    // 2D. Warm Nihonga golden-taupe 3D cylindrical flank shading in S1; smoky charcoal edge in S2
+    for (const side of [-1, 1] as const) {
+      ctx.beginPath();
+      for (let i = 2; i < n; i++) {
+        const hw = koiBodyHalfWidth(Math.max(0.012, spine[i].s), fish.maxHalfWidth);
+        const px = spine[i].x + spine[i].nx * side * hw * 0.99;
+        const py = spine[i].y + spine[i].ny * side * hw * 0.99;
+        if (i === 2) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      const flankDayRgb: [number, number, number] = isSumie ? [28, 22, 18] : [148, 114, 78];
+      const flankRgb = mixRgb([4, 10, 18], flankDayRgb, koiDaylight);
+      const flankAlpha = koiLerp(0.40, isSumie ? 0.24 : 0.34, koiDaylight);
+      ctx.strokeStyle = rgbToRgba(flankRgb, flankAlpha);
+      ctx.lineWidth = Math.max(2.4, fish.maxHalfWidth * 0.18);
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.stroke();
     }
 
-    ctx.restore();
+    // Soft feathered moonlit dorsal wrap fading in continuously during twilight/night
+    if (koiNightFrac > 0.01) {
+      const sheenBands: Array<[number, number]> = [
+        [0.85, 0.032],
+        [0.62, 0.036],
+        [0.40, 0.036],
+        [0.22, 0.030],
+      ];
+      for (const [wFrac, aVal] of sheenBands) {
+        ctx.beginPath();
+        for (let i = 4; i < n - 2; i++) {
+          const p = spine[i];
+          if (i === 4) ctx.moveTo(p.x, p.y);
+          else ctx.lineTo(p.x, p.y);
+        }
+        ctx.strokeStyle = `rgba(180, 222, 252, ${(aVal * koiNightFrac).toFixed(4)})`;
+        ctx.lineWidth = Math.max(4, fish.maxHalfWidth * wFrac);
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.stroke();
+      }
+    }
 
-    // Stroke only the left & right flanks (open at the tail peduncle so no dark collar cuts off the tail)
+    // Subtle snout lip highlight (continuous daylight blend)
+    ctx.beginPath();
+    ctx.moveTo(n1.x - head.nx * (hw1 * 0.70) + head.tx * (domeRy * 0.34), n1.y - head.ny * (hw1 * 0.70) + head.ty * (domeRy * 0.34));
+    ctx.quadraticCurveTo(snoutTipX, snoutTipY, n1.x + head.nx * (hw1 * 0.70) + head.tx * (domeRy * 0.34), n1.y + head.ny * (hw1 * 0.70) + head.ty * (domeRy * 0.34));
+    const lipRgb = mixRgb([165, 212, 248], [155, 126, 94], koiDaylight);
+    ctx.strokeStyle = rgbToRgba(lipRgb, koiLerp(0.28, 0.38, koiDaylight));
+    ctx.lineWidth = Math.max(1.1, fish.maxHalfWidth * 0.024);
+    ctx.stroke();
+
+    ctx.restore(); // end body clip
+
+    // 3. Body contour outline (continuous daylight blend)
     ctx.save();
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.lineWidth = style === "sumie" ? 1.55 : 1.15;
-    ctx.strokeStyle =
-      style === "sumie"
-        ? `rgba(20, 18, 16, ${(0.82 * koiExposure).toFixed(3)})`
-        : isLight
-          ? "rgba(62, 42, 24, 0.42)"
-          : `rgba(${Math.round(96 * koiExposure)}, ${Math.round(82 * koiExposure)}, ${Math.round(64 * koiExposure)}, 0.48)`;
-    strokeBodyFlanksOpenTail();
+    if (isSumie) {
+      const sumieOutAlpha = koiLerp(0.80, 0.96, koiDaylight);
+      this.strokeCalligraphicPolyline(ctx, buildRightFlankPts(1.0), outlineWidth, outlineRgb, sumieOutAlpha, fish.seed * 0.13, false);
+      this.strokeCalligraphicPolyline(ctx, buildLeftFlankPts(1.0), outlineWidth, outlineRgb, sumieOutAlpha, fish.seed * 0.13 + 2.7, false);
+    } else {
+      traceBodyContour(0, 0, 1.0);
+      ctx.strokeStyle = rgbToRgba(outlineRgb, koiLerp(0.74, 0.88, koiDaylight));
+      ctx.lineWidth = outlineWidth;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.stroke();
+    }
     ctx.restore();
 
-    // D. Ribbed Anatomical Dorsal Fin Sail, Operculum Gill Plates, Dorso-Lateral Eyes & Lip-Rooted Barbels
-    this.paintKoiHeadDetails(ctx, fish, snoutTipX, snoutTipY, isLight, koiExposure);
-    this.paintKoiDorsalFin(ctx, fish, isLight, koiExposure);
+    // 4. Head anatomical details (sculpted 3D cheek opercula, legible almond obsidian eyes, snout-margin nostrils)
+    this.paintKoiHeadDetails(ctx, fish, isLight, isSumie, shiroPigment, outlineRgb, nightDepth);
+
+    // 5. Wider translucent ivory dorsal ribbon with clear diagonal rays
+    this.paintKoiDorsalFin(ctx, fish, isLight, isSumie, shiroPigment, outlineRgb, nightDepth);
+
+    ctx.restore();
   }
 
-  private spineToWorld(
+  private paintKoiBarbels(
+    ctx: CanvasRenderingContext2D,
     fish: KoiFish,
-    s: number,
-    u: number,
-    out: { x: number; y: number; tx: number; ty: number; nx: number; ny: number }
+    isLight: boolean,
+    isSumie: boolean,
+    shiroRgb: [number, number, number],
+    outlineRgb: [number, number, number],
+    nightDepth: number
   ): void {
-    const spine = fish.spine;
-    const n = spine.length;
-    const normIdx = koiClamp(s / 0.83, 0, 1) * (n - 1);
-    const i0 = Math.min(n - 2, Math.max(0, Math.floor(normIdx)));
-    const frac = normIdx - i0;
-    const a = spine[i0];
-    const b = spine[i0 + 1];
+    const strokeCol = rgbToRgba(outlineRgb, isLight ? (isSumie ? 0.94 : 0.86) : 0.74);
+    const lineW = Math.max(1.1, fish.maxHalfWidth * (isSumie ? 0.022 : 0.016));
+    const bFrame = this.sampleSpineFrame(fish, 0.036);
+    const bHw = koiBodyHalfWidth(0.036, fish.maxHalfWidth);
+    const barbelLen = fish.maxHalfWidth * (isSumie ? 0.46 : 0.42);
+    const barbelBaseW = Math.max(2.6, fish.maxHalfWidth * 0.088);
 
-    const cx = a.x + (b.x - a.x) * frac;
-    const cy = a.y + (b.y - a.y) * frac;
-    let tx = a.tx + (b.tx - a.tx) * frac;
-    let ty = a.ty + (b.ty - a.ty) * frac;
-    const len = Math.hypot(tx, ty) || 1;
-    tx /= len;
-    ty /= len;
-    const nx = -ty;
-    const ny = tx;
+    for (const side of [-1, 1] as const) {
+      const bx0 = bFrame.x + bFrame.nx * (side * bHw * 0.70);
+      const by0 = bFrame.y + bFrame.ny * (side * bHw * 0.70);
+      // Fleshy outward-curving mustache whiskers sweeping gracefully sideways & curving up at the tip
+      const tipX = bx0 + bFrame.nx * (side * barbelLen * 1.02) + bFrame.tx * (barbelLen * 0.48);
+      const tipY = by0 + bFrame.ny * (side * barbelLen * 1.02) + bFrame.ty * (barbelLen * 0.48);
+      const cTopX = bx0 + bFrame.nx * (side * barbelLen * 0.72) - bFrame.tx * (barbelLen * 0.14);
+      const cTopY = by0 + bFrame.ny * (side * barbelLen * 0.72) - bFrame.ty * (barbelLen * 0.14);
+      const cBotX = bx0 + bFrame.nx * (side * barbelLen * 0.76) - bFrame.tx * (barbelLen * 0.32);
+      const cBotY = by0 + bFrame.ny * (side * barbelLen * 0.76) - bFrame.ty * (barbelLen * 0.32);
 
-    const hw = koiBodyHalfWidth(koiClamp(s, 0.015, 0.83), fish.maxHalfWidth);
-    out.x = cx + nx * (u * hw);
-    out.y = cy + ny * (u * hw);
-    out.tx = tx;
-    out.ty = ty;
-    out.nx = nx;
-    out.ny = ny;
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(bx0 + bFrame.tx * (barbelBaseW * 0.50), by0 + bFrame.ty * (barbelBaseW * 0.50));
+      ctx.quadraticCurveTo(cTopX, cTopY, tipX, tipY);
+      ctx.quadraticCurveTo(cBotX, cBotY, bx0 - bFrame.tx * (barbelBaseW * 0.54), by0 - bFrame.ty * (barbelBaseW * 0.54));
+      ctx.closePath();
+
+      ctx.fillStyle = rgbToRgba(darkenRgb(shiroRgb, 1.02), nightDepth > 0.1 ? 0.88 : 0.98);
+      ctx.fill();
+      ctx.strokeStyle = strokeCol;
+      ctx.lineWidth = lineW * 0.82;
+      ctx.lineJoin = "round";
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
-  /**
-   * Paints a single dorsal marking patch adapted to the active artistic style.
-   */
   private paintSpineOrganicPatch(
     ctx: CanvasRenderingContext2D,
     fish: KoiFish,
-    p: KoiFish["patches"][number],
-    fillRgb: [number, number, number],
-    alpha: number
+    patch: OrganicPatch,
+    rgb: [number, number, number],
+    isLight: boolean,
+    isSumie: boolean,
+    isHeadCap: boolean
   ): void {
-    const style = this.artStyle;
-    const steps = 28;
+    const samples = 64;
+    const pts: Array<{ x: number; y: number }> = [];
+    for (let k = 0; k < samples; k++) {
+      const ang = (k / samples) * Math.PI * 2;
+      let rMod =
+        1.0 +
+        patch.warpAmp * 0.45 * Math.sin(ang * patch.warpFreq + patch.phase) +
+        patch.warpAmp * 0.24 * Math.cos(ang * (patch.warpFreq * 0.65) - patch.phase * 0.5);
+      if (isHeadCap) {
+        // Pronounced waisted 4-lobed cranial Hi shield: narrower rounded forehead dome between eyes,
+        // clear inward lateral waist, fuller lower cheek lobes, and crisp bilobed M-shaped rear base!
+        const ca = Math.cos(ang); // +1 = rear (gills), -1 = front (nose)
+        const sa = Math.sin(ang); // ±1 = cheeks
+        const frontNarrow = ca < -0.15 ? -0.14 * Math.abs(sa) * Math.pow(-ca, 0.7) : 0;
+        const lowerLobeSwell = ca > 0.10 && ca < 0.78 ? 0.16 * Math.abs(sa) : 0;
+        const waistPinch = -0.20 * Math.exp(-Math.pow((ca + 0.06) * 4.2, 2)) * Math.abs(sa);
+        const bilobedMBase = ca > 0.55 ? -0.34 * Math.pow((ca - 0.55) / 0.45, 1.35) : 0;
+        const gentleScallop = 0.045 * Math.cos(ang * 4) + 0.025 * Math.sin(ang * 6 + 0.4);
+        rMod = 0.98 + frontNarrow + lowerLobeSwell + waistPinch + bilobedMBase + gentleScallop;
+      }
+      if (isSumie) {
+        rMod +=
+          0.042 * Math.sin(ang * 11.0 + patch.phase * 1.3) +
+          0.028 * Math.cos(ang * 19.0 - patch.phase * 0.8) +
+          0.018 * Math.sin(ang * 31.0 + patch.phase * 0.5);
+      }
+      const s = koiClamp(patch.sCenter + Math.cos(ang) * patch.sRadius * rMod, 0.042, 0.825);
+      const u = koiClamp(patch.uCenter + Math.sin(ang) * patch.uRadius * rMod, -1.04, 1.04);
+      const frame = this.sampleSpineFrame(fish, s);
+      const hw = koiBodyHalfWidth(Math.max(0.012, s), fish.maxHalfWidth);
+      pts.push({
+        x: frame.x + frame.nx * (u * hw),
+        y: frame.y + frame.ny * (u * hw),
+      });
+    }
+
+    const tracePts = () => {
+      ctx.beginPath();
+      for (let k = 0; k < pts.length; k++) {
+        const cur = pts[k];
+        const nxt = pts[(k + 1) % pts.length];
+        const mx = (cur.x + nxt.x) * 0.5;
+        const my = (cur.y + nxt.y) * 0.5;
+        if (k === 0) {
+          const prev = pts[pts.length - 1];
+          ctx.moveTo((prev.x + cur.x) * 0.5, (prev.y + cur.y) * 0.5);
+        }
+        ctx.quadraticCurveTo(cur.x, cur.y, mx, my);
+      }
+      ctx.closePath();
+    };
+
+    const centerFrame = this.sampleSpineFrame(fish, koiClamp(patch.sCenter, 0.05, 0.82));
+    const centerHw = koiBodyHalfWidth(Math.max(0.012, patch.sCenter), fish.maxHalfWidth);
+    const cx = centerFrame.x + centerFrame.nx * (patch.uCenter * centerHw);
+    const cy = centerFrame.y + centerFrame.ny * (patch.uCenter * centerHw);
+    const gradR = Math.max(14, patch.sRadius * fish.bodyLength * 1.42);
+
     ctx.save();
-
-    const sCenterEff = p.sCenter < 0.22 ? p.sCenter * 0.78 : p.sCenter;
-    const sRadEff = p.sCenter < 0.22 ? p.sRadius * 1.18 : p.sRadius;
-
-    const patchPtsX = new Float32Array(steps);
-    const patchPtsY = new Float32Array(steps);
-    for (let i = 0; i < steps; i++) {
-      const angle = (i / steps) * Math.PI * 2;
-      const cos = Math.cos(angle);
-      const sin = Math.sin(angle);
-
-      const ns = sCenterEff + cos * sRadEff;
-      const nu = p.uCenter + sin * p.uRadius;
-      const warp = fbm2D(ns * 8.5 + p.phase, nu * 3.6 - p.phase * 0.5, fish.seed);
-      const rFactor = 1.0 - warp * p.warpAmp * 0.68;
-
-      const sSample = koiClamp(sCenterEff + cos * sRadEff * rFactor, 0.032, 0.83);
-      const uSample = koiClamp(p.uCenter + sin * p.uRadius * rFactor, -1.08, 1.08);
-      this.spineToWorld(fish, sSample, uSample, this.ptScratch);
-      patchPtsX[i] = this.ptScratch.x;
-      patchPtsY[i] = this.ptScratch.y;
-    }
-
-    ctx.beginPath();
-    const mid0X = (patchPtsX[steps - 1] + patchPtsX[0]) * 0.5;
-    const mid0Y = (patchPtsY[steps - 1] + patchPtsY[0]) * 0.5;
-    ctx.moveTo(mid0X, mid0Y);
-    for (let i = 0; i < steps; i++) {
-      const next = (i + 1) % steps;
-      const midX = (patchPtsX[i] + patchPtsX[next]) * 0.5;
-      const midY = (patchPtsY[i] + patchPtsY[next]) * 0.5;
-      ctx.quadraticCurveTo(patchPtsX[i], patchPtsY[i], midX, midY);
-    }
-    ctx.closePath();
-
-    if (false) {
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = rgbToRgba(fillRgb, alpha);
+    const isSumiPatch = patch.layer === "sumi";
+    tracePts();
+    if (!isSumie) {
+      const grad = ctx.createRadialGradient(
+        cx - centerFrame.tx * (gradR * 0.14),
+        cy - centerFrame.ty * (gradR * 0.14),
+        gradR * 0.06,
+        cx,
+        cy,
+        gradR
+      );
+      grad.addColorStop(0.0, rgbToRgba(darkenRgb(rgb, 1.07), 0.99));
+      grad.addColorStop(0.62, rgbToRgba(rgb, 0.98));
+      grad.addColorStop(1.0, rgbToRgba(darkenRgb(rgb, 0.86), 0.96));
+      ctx.fillStyle = grad;
       ctx.fill();
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = "#18120e";
-      ctx.stroke();
     } else {
-      ctx.shadowColor = rgbToRgba(fillRgb, alpha * 0.75);
-      ctx.shadowBlur = Math.max(4, fish.maxHalfWidth * 0.28);
-      ctx.fillStyle = rgbToRgba(fillRgb, alpha);
+      // SUMI-E: Luminous vermilion watercolor wash (NO muddy brown core + neon halo!)
+      // and deep velvety jet-black Sumi ink (NO blurry grey polka-dot circles!)
+      const coreRgb: [number, number, number] = isSumiPatch
+        ? (isLight ? [14, 13, 14] : rgb)
+        : (isLight ? [244, 52, 8] : rgb);
+      const grad = ctx.createRadialGradient(
+        cx - centerFrame.tx * (gradR * 0.12),
+        cy - centerFrame.ty * (gradR * 0.12),
+        gradR * 0.08,
+        cx,
+        cy,
+        gradR
+      );
+      if (isSumiPatch) {
+        grad.addColorStop(0.0, rgbToRgba(coreRgb, isLight ? 0.96 : 0.86));
+        grad.addColorStop(0.80, rgbToRgba(coreRgb, isLight ? 0.92 : 0.82));
+        grad.addColorStop(1.0, rgbToRgba(isLight ? [34, 31, 30] : coreRgb, isLight ? 0.86 : 0.76));
+      } else {
+        // Bright luminous vermilion core gently deepening toward edges like real watercolor backrun
+        grad.addColorStop(0.0, rgbToRgba(isLight ? [255, 76, 16] : coreRgb, isLight ? 0.94 : 0.86));
+        grad.addColorStop(0.65, rgbToRgba(coreRgb, isLight ? 0.94 : 0.84));
+        grad.addColorStop(1.0, rgbToRgba(isLight ? [216, 30, 4] : coreRgb, isLight ? 0.90 : 0.80));
+      }
+      ctx.fillStyle = grad;
       ctx.fill();
 
-      ctx.shadowBlur = 0;
-      ctx.lineWidth = 1.1;
-      ctx.strokeStyle = rgbToRgba(darkenRgb(fillRgb, 0.72), alpha * 0.58);
-      ctx.stroke();
+      if (isLight) {
+        ctx.save();
+        ctx.clip();
+        // Subtle darker organic watercolor backrun along the deckled edge
+        tracePts();
+        ctx.strokeStyle = rgbToRgba(isSumiPatch ? [8, 8, 10] : [204, 24, 4], 0.44);
+        ctx.lineWidth = Math.max(1.8, fish.maxHalfWidth * 0.028);
+        ctx.stroke();
+        ctx.restore();
+      }
     }
-
     ctx.restore();
   }
 
-  /**
-   * Evaluates which pigment layer ('shiro' | 'hi' | 'sumi') covers `(s, u)` on `fish`
-   * so scale rims and specular highlights adapt naturally to the underlying skin color.
-   */
   private samplePatchLayerAt(fish: KoiFish, s: number, u: number): "shiro" | "hi" | "sumi" {
-    let layer: "shiro" | "hi" | "sumi" = fish.variety === "showa" ? "sumi" : "shiro";
-    const maxPatches =
-      this.artStyle === "sumie" ? Math.min(2, fish.patches.length) : fish.patches.length;
-    for (let i = 0; i < maxPatches; i++) {
-      const p = fish.patches[i];
-      const sCenterEff = p.sCenter < 0.22 ? p.sCenter * 0.78 : p.sCenter;
-      const sRadEff = p.sCenter < 0.22 ? p.sRadius * 1.18 : p.sRadius;
-      const ds = (s - sCenterEff) / Math.max(0.01, sRadEff);
-      const du = (u - p.uCenter) / Math.max(0.01, p.uRadius);
-      const rawDistSq = ds * ds + du * du;
-      if (rawDistSq > 1.85) continue;
-      const warp = fbm2D(s * 8.5 + p.phase, u * 3.6 - p.phase * 0.5, fish.seed);
-      const rFactor = Math.max(0.35, 1.0 - warp * p.warpAmp * 0.82);
-      if (Math.sqrt(rawDistSq) <= rFactor) {
-        if (this.artStyle === "sumie") {
-          layer = i === 0 ? "hi" : "sumi";
-        } else {
-          layer = p.layer;
-        }
+    let layer: "shiro" | "hi" | "sumi" = "shiro";
+    for (let pIdx = 0; pIdx < fish.patches.length; pIdx++) {
+      const p = fish.patches[pIdx];
+      if (p.sCenter < 0.24) continue;
+      const ds = (s - p.sCenter) / Math.max(0.015, p.sRadius);
+      const du = (u - p.uCenter) / Math.max(0.08, p.uRadius);
+      const ang = Math.atan2(du, ds);
+      const warp =
+        1.0 +
+        p.warpAmp * 0.45 * Math.sin(ang * p.warpFreq + p.phase) +
+        p.warpAmp * 0.24 * Math.cos(ang * (p.warpFreq * 0.65) - p.phase * 0.5);
+      const distSq = (ds * ds + du * du) / (warp * warp);
+      if (distSq <= 1.0) {
+        if (p.layer === "sumi") return "sumi";
+        layer = "hi";
       }
     }
     return layer;
   }
 
-  /**
-   * Paints an interlocking, imbricated Japanese *Uroko* scale lattice starting strictly behind
-   * the operculum (`s >= 0.235` to `0.795`). Each scale keeps the exact original `scaleRad`
-   * (`Math.max(2.2, fish.maxHalfWidth * 0.165 * (1 - (s - 0.25) * 0.45))`), while the longitudinal
-   * row spacing (`0.82 * midScaleRad`) and symmetrically centered staggered columns (`u = 0`)
-   * make each row's arc tips meet the preceding row's pocket rims in a true diamond mesh.
-   */
   private paintCalligraphicScales(
     ctx: CanvasRenderingContext2D,
     fish: KoiFish,
     isLight: boolean,
-    koiExposure = 1.0
+    isSumie: boolean,
+    shiroRgb: [number, number, number],
+    hiRgb: [number, number, number],
+    sumiRgb: [number, number, number],
+    _outlineRgb: [number, number, number]
   ): void {
-    const style = this.artStyle;
+    const sStart = 0.258;
+    const sEnd = 0.812;
+    const rowCount = isSumie ? 21 : 30;
+    const ds = (sEnd - sStart) / (rowCount - 1);
+    const scaleWorldStep = ds * fish.bodyLength;
+
+    // 4 Classic Japanese Koi designs achieved purely by varying scale colors:
+    // 0: Taisho Sanke (Ivory + Vermilion Hi + Sumi Black scales)
+    // 1: Kohaku (Pure Snow-Ivory + Deep Crimson-Vermilion Hi scales, no Sumi scales)
+    // 2: Shiro Utsuri (Crisp Black & White scales only)
+    // 3: Black-Backed Hi-Flank (Deep Sumi-Black Reticulated Dorsal scales + Warm Vermilion Flank scales)
+    const scaleDesign = ((fish.id % 4) + 4) % 4;
+    const koiDay = this.getDaylightFactor();
+    const nightDim = koiLerp(0.86, 1.0, koiDay);
+    const tintNightScale = (rgb: [number, number, number]): [number, number, number] => {
+      const d = darkenRgb(rgb, nightDim);
+      return koiDay >= 0.995 ? d : mixRgb([14, 30, 48], d, koiLerp(0.72, 1.0, koiDay));
+    };
+
+    const kohakuShiro = tintNightScale([250, 242, 228]);
+    const kohakuHi = tintNightScale([234, 42, 16]);
+    const utsuriWhite = tintNightScale([248, 244, 236]);
+    const utsuriBlack = tintNightScale([18, 18, 20]);
+    const blackDorsal = tintNightScale([22, 22, 24]);
+    const blackDorsalRim = tintNightScale([68, 68, 72]);
+    const flankHi = tintNightScale([226, 68, 24]);
+    const edgeIvory = tintNightScale([242, 236, 224]);
+
     ctx.save();
     ctx.lineCap = "round";
+    ctx.lineJoin = "round";
 
-    const sStart = 0.235;
-    const sEnd = 0.795;
-    const torsoSpineLen = Math.max(40, fish.bodyLength * 0.83);
-    const midScaleRad = Math.max(2.2, fish.maxHalfWidth * 0.155);
-    // Tight longitudinal row step (`0.82 * midScaleRad`) so staggered rows truly interlock longitudinally
-    const sRows = koiClamp(
-      Math.round(((sEnd - sStart) * torsoSpineLen) / (midScaleRad * 0.82)),
-      26,
-      40
-    );
+    for (let r = rowCount - 1; r >= 0; r--) {
+      const s = sStart + r * ds;
+      const frame = this.sampleSpineFrame(fish, s);
+      const hw = koiBodyHalfWidth(s, fish.maxHalfWidth);
+      if (hw < 3) continue;
 
-    for (let r = 0; r < sRows; r++) {
-      const s = sStart + (r / (sRows - 1)) * (sEnd - sStart);
-      // Exact original scale radius formula (size is strictly unchanged)
-      const scaleRad = Math.max(2.2, fish.maxHalfWidth * 0.165 * (1 - (s - 0.25) * 0.45));
-      const localHw = Math.max(4, koiBodyHalfWidth(s, fish.maxHalfWidth));
+      const tBody = (s - sStart) / (sEnd - sStart);
+      const scaleR = Math.max(
+        scaleWorldStep * 1.14,
+        fish.maxHalfWidth * ((isSumie ? 0.164 : 0.130) - 0.038 * tBody)
+      );
+      const colSpacing = scaleR * 1.54;
+      const halfCols = Math.ceil((hw + scaleR) / colSpacing);
+      const stagger = (r % 2) * 0.5;
+      const angle = Math.atan2(-frame.ty, -frame.tx);
 
-      // Symmetrically centered column lattice across [-0.84, +0.84]
-      const uSpan = 1.68;
-      const uCols = koiClamp(Math.round((localHw * uSpan) / (scaleRad * 1.34)), 7, 13);
-      const uStep = uSpan / uCols;
-      const isOddRow = (r & 1) === 1;
-      const maxCol = isOddRow ? uCols - 1 : uCols;
+      for (let c = -halfCols; c <= halfCols; c++) {
+        const latOffset = (c + stagger) * colSpacing;
+        if (Math.abs(latOffset) > hw + scaleR * 0.42) continue;
 
-      for (let c = 0; c <= maxCol; c++) {
-        const u = isOddRow
-          ? (c + 0.5 - uCols * 0.5) * uStep
-          : (c - uCols * 0.5) * uStep;
-        if (Math.abs(u) > 0.845) continue;
-        // Leave a clean narrow channel directly under the dorsal fin attachment ridge
-        if (s >= 0.27 && s <= 0.73 && Math.abs(u) < 0.085) continue;
+        const u = koiClamp(latOffset / Math.max(1, hw), -1.0, 1.0);
+        const cx = frame.x + frame.nx * latOffset;
+        const cy = frame.y + frame.ny * latOffset;
+        const layer = this.samplePatchLayerAt(fish, s, u);
 
-        this.spineToWorld(fish, s, u, this.ptScratch);
-        const backAngle = Math.atan2(-this.ptScratch.ty, -this.ptScratch.tx);
-        // Subtle lateral perspective foreshortening near the outer flanks
-        const flankCos = Math.max(0.58, Math.sqrt(Math.max(0, 1 - u * u * 0.75)));
-        const arcSpan = 1.12 * (0.80 + 0.20 * flankCos);
-
-        const patchLayer = this.samplePatchLayerAt(fish, s, u);
-
-        // 1. Inner specular crescent (at 85% of scaleRad, giving 3D relief without enlarging the scale)
-        if (true) {
-          ctx.beginPath();
-          ctx.arc(
-            this.ptScratch.x,
-            this.ptScratch.y,
-            scaleRad * 0.85,
-            backAngle - arcSpan * 0.76,
-            backAngle + arcSpan * 0.76
-          );
-          ctx.lineWidth = 0.62;
-          ctx.strokeStyle =
-            style === "sumie"
-              ? "rgba(248, 240, 224, 0.26)"
-              : patchLayer === "hi"
-                ? "rgba(255, 226, 168, 0.34)"
-                : patchLayer === "sumi"
-                  ? "rgba(248, 238, 210, 0.28)"
-                  : isLight
-                    ? `rgba(${Math.round(255 * koiExposure)}, ${Math.round(252 * koiExposure)}, ${Math.round(238 * koiExposure)}, 0.48)`
-                    : `rgba(${Math.round(240 * koiExposure)}, ${Math.round(228 * koiExposure)}, ${Math.round(200 * koiExposure)}, ${(0.34 * koiExposure).toFixed(3)})`;
-          ctx.stroke();
+        let sumieFade = 1.0;
+        if (isSumie) {
+          if (layer === "sumi") continue;
+          const shoulderWeight = tBody < 0.36 ? 1.0 : Math.max(0.20, 1.0 - (tBody - 0.36) * 1.45);
+          const flankWeight = Math.abs(u) > 0.36 ? 1.0 : 0.74;
+          sumieFade = koiClamp(shoulderWeight * flankWeight, 0.20, 1.0);
+          if (tBody > 0.62 && Math.abs(u) < 0.50) continue;
         }
 
-        // 2. Interlocking imbricated scale pocket rim at exact `scaleRad`
-        ctx.beginPath();
-        ctx.arc(
-          this.ptScratch.x,
-          this.ptScratch.y,
-          scaleRad,
-          backAngle - arcSpan,
-          backAngle + arcSpan
-        );
-        ctx.lineWidth = false ? 1.12 : 0.85;
-        ctx.strokeStyle =
-          false
-            ? "rgba(20, 14, 10, 0.66)"
-            : style === "sumie"
-              ? patchLayer === "sumi"
-                ? "rgba(240, 232, 216, 0.40)"
-                : "rgba(18, 15, 12, 0.54)"
-              : patchLayer === "sumi"
-                ? "rgba(244, 232, 202, 0.44)"
-                : patchLayer === "hi"
-                  ? isLight
-                    ? "rgba(118, 24, 12, 0.54)"
-                    : "rgba(92, 18, 8, 0.58)"
-                  : isLight
-                    ? "rgba(68, 48, 28, 0.46)"
-                    : "rgba(42, 28, 16, 0.52)";
-        ctx.stroke();
+        const edgeCos = Math.max(0.58, Math.sqrt(Math.max(0.08, 1 - u * u * 0.60)));
+        const rx = scaleR * 1.16;
+        const ry = scaleR * 1.06 * edgeCos;
+
+        ctx.save();
+        if (!isSumie) {
+          ctx.translate(cx, cy);
+          ctx.rotate(angle);
+
+          let fillRgb = shiroRgb;
+          let strokeCol = isLight ? "rgba(130, 102, 74, 0.62)" : "rgba(12, 22, 34, 0.48)";
+
+          if (scaleDesign === 1) {
+            // Classic Kohaku: pure snow-ivory & deep crimson-vermilion Hi scales (no Sumi)
+            if (layer === "hi") {
+              fillRgb = kohakuHi;
+              strokeCol = isLight ? "rgba(148, 24, 10, 0.58)" : "rgba(42, 12, 8, 0.48)";
+            } else {
+              fillRgb = darkenRgb(kohakuShiro, 1.0 - 0.09 * Math.abs(u));
+              strokeCol = isLight ? "rgba(136, 112, 86, 0.58)" : "rgba(14, 24, 38, 0.46)";
+            }
+          } else if (scaleDesign === 2) {
+            // Classic Shiro Utsuri: pure black & white scales
+            if (layer === "hi" || layer === "sumi") {
+              fillRgb = utsuriBlack;
+              strokeCol = isLight ? "rgba(58, 56, 56, 0.54)" : "rgba(38, 42, 48, 0.44)";
+            } else {
+              fillRgb = darkenRgb(utsuriWhite, 1.0 - 0.10 * Math.abs(u));
+              strokeCol = isLight ? "rgba(92, 88, 82, 0.58)" : "rgba(24, 30, 38, 0.46)";
+            }
+          } else if (scaleDesign === 3) {
+            // Classic Showa Sanshoku: organic diagonal sumi-black & vermilion-red wrapping saddles on ivory
+            const waveBand = Math.sin(tBody * Math.PI * 2.6 + u * 2.1 + fish.seed * 0.37);
+            const isSumiWrap = layer === "sumi" || (layer === "shiro" && waveBand > 0.38);
+            const isHiWrap = !isSumiWrap && (layer === "hi" || waveBand < -0.52);
+            if (isSumiWrap) {
+              fillRgb = blackDorsal;
+              strokeCol = isLight ? "rgba(76, 74, 72, 0.56)" : "rgba(48, 52, 58, 0.44)";
+            } else if (isHiWrap) {
+              fillRgb = flankHi;
+              strokeCol = isLight ? "rgba(144, 36, 12, 0.58)" : "rgba(46, 16, 10, 0.46)";
+            } else {
+              fillRgb = darkenRgb(edgeIvory, 1.0 - 0.10 * Math.abs(u));
+              strokeCol = isLight ? "rgba(126, 104, 82, 0.56)" : "rgba(18, 28, 42, 0.44)";
+            }
+          } else {
+            // Classic Taisho Sanke: ivory Shiroji + vermilion Hi + lacquer Sumi scales
+            if (layer === "hi") {
+              fillRgb = hiRgb;
+              strokeCol = isLight ? "rgba(148, 32, 6, 0.56)" : "rgba(42, 12, 8, 0.46)";
+            } else if (layer === "sumi") {
+              fillRgb = sumiRgb;
+              strokeCol = isLight ? "rgba(46, 44, 46, 0.38)" : "rgba(28, 38, 52, 0.32)";
+            } else {
+              fillRgb = darkenRgb(shiroRgb, 1.0 - 0.11 * Math.abs(u));
+            }
+          }
+
+          ctx.beginPath();
+          ctx.moveTo(-rx * 0.85, -ry);
+          ctx.lineTo(0, -ry);
+          ctx.ellipse(0, 0, rx, ry, 0, -Math.PI * 0.5, Math.PI * 0.5, false);
+          ctx.lineTo(-rx * 0.85, ry);
+          ctx.closePath();
+
+          const sg = ctx.createLinearGradient(-rx * 0.15, 0, rx, 0);
+          if (scaleDesign === 3 && fillRgb === blackDorsal) {
+            sg.addColorStop(0.0, rgbToRgba(darkenRgb(fillRgb, 0.82), 1.0));
+            sg.addColorStop(0.58, rgbToRgba(fillRgb, 1.0));
+            sg.addColorStop(1.0, rgbToRgba(blackDorsalRim, 1.0));
+          } else {
+            sg.addColorStop(0.0, rgbToRgba(darkenRgb(fillRgb, layer === "shiro" ? 0.90 : 0.93), 1.0));
+            sg.addColorStop(0.58, rgbToRgba(fillRgb, 1.0));
+            sg.addColorStop(1.0, rgbToRgba(darkenRgb(fillRgb, 1.04), 1.0));
+          }
+          ctx.fillStyle = sg;
+          ctx.fill();
+
+          ctx.beginPath();
+          ctx.ellipse(0, 0, rx, ry, 0, -Math.PI * 0.47, Math.PI * 0.47, false);
+          ctx.strokeStyle = strokeCol;
+          ctx.lineWidth = Math.max(0.65, fish.maxHalfWidth * 0.009);
+          ctx.stroke();
+        } else {
+          // SUMI-E: Classic scale-color variations rendered as delicate brushed dry-ink crescents
+          const jx = Math.sin(r * 7.3 + c * 11.1 + fish.seed) * (scaleR * 0.16);
+          const jy = Math.cos(r * 5.7 + c * 13.7 + fish.seed) * (scaleR * 0.14);
+          const jAng = Math.sin(r * 4.1 + c * 9.3) * 0.16;
+          ctx.translate(cx + jx, cy + jy);
+          ctx.rotate(angle + jAng);
+
+          const thick = Math.max(0.9, fish.maxHalfWidth * (0.012 + 0.012 * sumieFade));
+          const spanA = Math.PI * (0.34 + 0.10 * Math.sin(r * 2.3 + c * 1.7));
+          ctx.beginPath();
+          ctx.ellipse(0, 0, rx, ry, 0, -spanA, spanA, false);
+          ctx.ellipse(-thick, 0, Math.max(1, rx - thick * 0.45), Math.max(1, ry * 0.96), 0, spanA, -spanA, true);
+          ctx.closePath();
+
+          let sumieScaleCol: string;
+          if (scaleDesign === 1) {
+            // Kohaku in Sumi-e: warm vermilion-cinnabar & soft grey ink crescents
+            sumieScaleCol =
+              layer === "hi"
+                ? `rgba(176, 36, 18, ${(0.56 * sumieFade).toFixed(2)})`
+                : `rgba(54, 48, 44, ${(0.44 * sumieFade).toFixed(2)})`;
+          } else if (scaleDesign === 2) {
+            // Shiro Utsuri in Sumi-e: crisp black-and-white sumi ink crescents
+            sumieScaleCol =
+              layer === "hi" || layer === "sumi"
+                ? `rgba(18, 17, 17, ${(0.72 * sumieFade).toFixed(2)})`
+                : `rgba(74, 72, 68, ${(0.42 * sumieFade).toFixed(2)})`;
+          } else if (scaleDesign === 3) {
+            // Classic Showa Sanshoku diagonal wrap crescents in Sumi-e
+            const waveBand = Math.sin(tBody * Math.PI * 2.6 + u * 2.1 + fish.seed * 0.37);
+            sumieScaleCol =
+              layer === "sumi" || waveBand > 0.38
+                ? `rgba(20, 19, 19, ${(0.70 * sumieFade).toFixed(2)})`
+                : layer === "hi" || waveBand < -0.52
+                  ? `rgba(154, 44, 22, ${(0.52 * sumieFade).toFixed(2)})`
+                  : `rgba(56, 52, 48, ${(0.42 * sumieFade).toFixed(2)})`;
+          } else {
+            // Taisho Sanke in Sumi-e: classic deep sumi ink & hanko red crescents
+            sumieScaleCol = isLight
+              ? (layer === "hi"
+                  ? `rgba(128, 22, 6, ${(0.42 * sumieFade).toFixed(2)})`
+                  : `rgba(34, 30, 28, ${(0.62 * sumieFade).toFixed(2)})`)
+              : `rgba(12, 22, 34, ${(0.46 * sumieFade).toFixed(2)})`;
+          }
+          ctx.fillStyle = sumieScaleCol;
+          ctx.fill();
+        }
+        ctx.restore();
       }
     }
     ctx.restore();
   }
 
-  /**
-   * Paints broad, 3-curve rounded fan-shaped Japanese Pectoral (*Munabire*) & Ventral (*Harabire*)
-   * fins with asymmetric turn-feathering, reduced transparency, and 7 radiating fin rays.
-   */
   private paintKoiPairedFins(
     ctx: CanvasRenderingContext2D,
     fish: KoiFish,
     isLight: boolean,
-    koiExposure = 1.0
+    outlineRgb: [number, number, number],
+    nightDepth: number
   ): void {
-    const style = this.artStyle;
-    const spine = fish.spine;
-    const pecNode = spine[4];
-    const venNode = spine[10];
-    const turnBias = koiClamp(fish.curvature * 1.65, -0.32, 0.32);
+    const isSumie = this.artStyle === "sumie";
+    const finStroke = rgbToRgba(outlineRgb, isLight ? (isSumie ? 0.95 : 0.86) : 0.72);
+    const finOutlineW = Math.max(1.15, fish.maxHalfWidth * (isSumie ? 0.032 : 0.017));
 
-    const drawRoundedFanFin = (
-      nodeX: number,
-      nodeY: number,
-      tx: number,
-      ty: number,
-      nx: number,
-      ny: number,
-      flankHw: number,
-      side: number,
-      span: number,
-      chord: number,
-      sweepBack: number,
-      withMotoguro: boolean
-    ) => {
-      // Anterior & posterior attachment roots tucked smoothly inside the body flank
-      const leadRootX = nodeX + tx * (chord * 0.22) + nx * side * (flankHw * 0.72);
-      const leadRootY = nodeY + ty * (chord * 0.22) + ny * side * (flankHw * 0.72);
-      const trailRootX = nodeX - tx * (chord * 0.78) + nx * side * (flankHw * 0.68);
-      const trailRootY = nodeY - ty * (chord * 0.78) + ny * side * (flankHw * 0.68);
-      const centerRootX = (leadRootX + trailRootX) * 0.5;
-      const centerRootY = (leadRootY + trailRootY) * 0.5;
+    const nightTint = (rgb: [number, number, number]): [number, number, number] => {
+      if (nightDepth <= 0.001) return rgb;
+      const k = nightDepth * 0.34;
+      return [
+        Math.round(rgb[0] * (1 - k) + 14 * k),
+        Math.round(rgb[1] * (1 - k) + 30 * k),
+        Math.round(rgb[2] * (1 - k) + 48 * k),
+      ];
+    };
 
-      // Broad rounded fan geometry: leading apex (tipX, tipY) + rounded posterior fan lobe (rearTipX, rearTipY)
-      const tipX = leadRootX + nx * side * span - tx * (sweepBack * 0.35);
-      const tipY = leadRootY + ny * side * span - ty * (sweepBack * 0.35);
-      const rearTipX =
-        leadRootX + nx * side * (span * 0.82) - tx * (chord * 0.92 + sweepBack * 0.68);
-      const rearTipY =
-        leadRootY + ny * side * (span * 0.82) - ty * (chord * 0.92 + sweepBack * 0.68);
+    const ivoryTip = nightTint(isSumie ? [248, 242, 232] : [250, 240, 226]);
+    const warmBase = nightTint(isSumie ? [168, 158, 148] : [216, 172, 130]);
+    const rayCol = isLight
+      ? (isSumie ? "rgba(22, 18, 16, 0.56)" : "rgba(122, 84, 52, 0.64)")
+      : "rgba(165, 212, 248, 0.50)";
 
-      const leadCtrlX = leadRootX + nx * side * (span * 0.74) + tx * (chord * 0.42);
-      const leadCtrlY = leadRootY + ny * side * (span * 0.74) + ty * (chord * 0.42);
-      const fanCtrl1X = leadRootX + nx * side * (span * 1.10) - tx * (chord * 0.44 + sweepBack * 0.45);
-      const fanCtrl1Y = leadRootY + ny * side * (span * 1.10) - ty * (chord * 0.44 + sweepBack * 0.45);
-      const fanCtrl2X = leadRootX + nx * side * (span * 1.02) - tx * (chord * 0.80 + sweepBack * 0.62);
-      const fanCtrl2Y = leadRootY + ny * side * (span * 1.02) - ty * (chord * 0.80 + sweepBack * 0.62);
-      const trailCtrlX = trailRootX + nx * side * (span * 0.42) - tx * (chord * 0.28);
-      const trailCtrlY = trailRootY + ny * side * (span * 0.42) - ty * (chord * 0.28);
+    // === 1. PECTORAL FINS (s = 0.276 .. 0.382) ===
+    const pLead = this.sampleSpineFrame(fish, 0.276);
+    const pTrail = this.sampleSpineFrame(fish, 0.382);
+    const hwLead = koiBodyHalfWidth(0.276, fish.maxHalfWidth);
+    const hwTrail = koiBodyHalfWidth(0.382, fish.maxHalfWidth);
 
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(leadRootX, leadRootY);
-      ctx.quadraticCurveTo(leadCtrlX, leadCtrlY, tipX, tipY);
-      ctx.bezierCurveTo(fanCtrl1X, fanCtrl1Y, fanCtrl2X, fanCtrl2Y, rearTipX, rearTipY);
-      ctx.quadraticCurveTo(trailCtrlX, trailCtrlY, trailRootX, trailRootY);
-      ctx.closePath();
+    const sweepOsc = Math.sin(fish.phase * 0.85) * 0.04;
+    // Compact rounded Mokkotsu teardrop paddles (1.24); swept-back pointed Sumi-e butterfly wings (1.50)
+    const span = fish.maxHalfWidth * fish.finSpanFactor * (isSumie ? 1.50 : 1.24);
 
-      const finGrad = ctx.createRadialGradient(
-        centerRootX,
-        centerRootY,
-        span * 0.06,
-        centerRootX,
-        centerRootY,
-        span * 1.16
-      );
-      if (false) {
-        finGrad.addColorStop(0.0, "rgba(250, 240, 214, 0.98)");
-        finGrad.addColorStop(0.68, "rgba(236, 218, 182, 0.88)");
-        finGrad.addColorStop(1.0, "rgba(220, 196, 152, 0.66)");
-      } else if (style === "sumie") {
-        const s0 = Math.round(222 * koiExposure);
-        const s1 = Math.round(182 * koiExposure);
-        const s2 = Math.round(148 * koiExposure);
-        finGrad.addColorStop(0.0, isLight ? "rgba(42, 38, 34, 0.82)" : `rgba(${s0}, ${Math.round(s0 * 0.96)}, ${Math.round(s0 * 0.90)}, 0.82)`);
-        finGrad.addColorStop(0.65, isLight ? "rgba(72, 66, 60, 0.56)" : `rgba(${s1}, ${Math.round(s1 * 0.96)}, ${Math.round(s1 * 0.90)}, 0.56)`);
-        finGrad.addColorStop(1.0, isLight ? "rgba(96, 88, 80, 0.24)" : `rgba(${s2}, ${Math.round(s2 * 0.95)}, ${Math.round(s2 * 0.88)}, 0.24)`);
-      } else {
-        const f0 = darkenRgb([252, 244, 228], koiExposure);
-        const f1 = darkenRgb([244, 230, 204], koiExposure);
-        const f2 = darkenRgb([228, 208, 174], koiExposure);
-        finGrad.addColorStop(0.0, rgbToRgba(f0, 0.95));
-        finGrad.addColorStop(0.62, rgbToRgba(f1, 0.80));
-        finGrad.addColorStop(1.0, rgbToRgba(f2, 0.40));
-      }
-      ctx.fillStyle = finGrad;
-      ctx.fill();
+    for (const side of [-1, 1] as const) {
+      const rootLx = pLead.x + pLead.nx * (side * hwLead * 0.90);
+      const rootLy = pLead.y + pLead.ny * (side * hwLead * 0.90);
+      const rootTx = pTrail.x + pTrail.nx * (side * hwTrail * 0.88);
+      const rootTy = pTrail.y + pTrail.ny * (side * hwTrail * 0.88);
 
-      // Clip inside the rounded fan contour for Motoguro base ink & 7 fanning fin rays
-      ctx.save();
-      ctx.clip();
+      // Mokkotsu: gently swept compact teardrop (0.30); Sumi-e: dramatic swept-back pointed butterfly wing (0.62)
+      const backSweep = (isSumie ? 0.62 : 0.30) + sweepOsc * side;
+      const outX = pLead.nx * side - pLead.tx * backSweep;
+      const outY = pLead.ny * side - pLead.ty * backSweep;
+      const outLen = Math.hypot(outX, outY) || 1;
+      const ux = outX / outLen;
+      const uy = outY / outLen;
+      const fx = pLead.tx;
+      const fy = pLead.ty;
 
-      if (withMotoguro) {
+      const leadPts: Array<{ x: number; y: number }> = [];
+      const tracePectoral = () => {
         ctx.beginPath();
-        ctx.arc(centerRootX + nx * side * (span * 0.12), centerRootY, span * 0.42, 0, Math.PI * 2);
-        ctx.shadowColor = "rgba(20, 16, 12, 0.75)";
-        ctx.shadowBlur = 5;
-        ctx.fillStyle = "rgba(24, 18, 14, 0.76)";
+        ctx.moveTo(rootLx, rootLy);
+        if (!isSumie) {
+          // MOKKOTSU: Compact curved teardrop paddle with warm peach-to-ivory shading
+          const tipX = rootLx + ux * span - fx * (span * 0.05);
+          const tipY = rootLy + uy * span - fy * (span * 0.05);
+          ctx.bezierCurveTo(
+            rootLx + ux * (span * 0.50) + fx * (span * 0.24),
+            rootLy + uy * (span * 0.50) + fy * (span * 0.24),
+            rootLx + ux * (span * 1.02) + fx * (span * 0.14),
+            rootLy + uy * (span * 1.02) + fy * (span * 0.14),
+            tipX,
+            tipY
+          );
+          const lobes = 7;
+          let prevX = tipX;
+          let prevY = tipY;
+          for (let l = 1; l <= lobes; l++) {
+            const t = l / lobes;
+            const bx =
+              (1 - t) * (1 - t) * tipX +
+              2 * (1 - t) * t * (rootTx + ux * (span * 0.72) - fx * (span * 0.20)) +
+              t * t * rootTx;
+            const by =
+              (1 - t) * (1 - t) * tipY +
+              2 * (1 - t) * t * (rootTy + uy * (span * 0.72) - fy * (span * 0.20)) +
+              t * t * rootTy;
+            const mx = (prevX + bx) * 0.5 + ux * (span * 0.028) - fx * (span * 0.040);
+            const my = (prevY + by) * 0.5 + uy * (span * 0.028) - fy * (span * 0.040);
+            ctx.quadraticCurveTo(mx, my, bx, by);
+            prevX = bx;
+            prevY = by;
+          }
+          ctx.closePath();
+        } else {
+          // SUMI-E: Swept-back pointed butterfly wing with graceful concave-trailing profile
+          const tipX = rootLx + ux * span - fx * (span * 0.22);
+          const tipY = rootLy + uy * span - fy * (span * 0.22);
+          const c1x = rootLx + ux * (span * 0.44) + fx * (span * 0.28);
+          const c1y = rootLy + uy * (span * 0.44) + fy * (span * 0.28);
+          const c2x = rootLx + ux * (span * 0.88) + fx * (span * 0.10);
+          const c2y = rootLy + uy * (span * 0.88) + fy * (span * 0.10);
+          ctx.bezierCurveTo(c1x, c1y, c2x, c2y, tipX, tipY);
+
+          ctx.bezierCurveTo(
+            tipX - ux * (span * 0.26) - fx * (span * 0.02),
+            tipY - uy * (span * 0.26) - fy * (span * 0.02),
+            rootTx + ux * (span * 0.52) - fx * (span * 0.34),
+            rootTy + uy * (span * 0.52) - fy * (span * 0.34),
+            rootTx,
+            rootTy
+          );
+          ctx.closePath();
+
+          if (leadPts.length === 0) {
+            for (let k = 0; k <= 12; k++) {
+              const t = k / 12;
+              const mt = 1 - t;
+              leadPts.push({
+                x: mt*mt*mt*rootLx + 3*mt*mt*t*c1x + 3*mt*t*t*c2x + t*t*t*tipX,
+                y: mt*mt*mt*rootLy + 3*mt*mt*t*c1y + 3*mt*t*t*c2y + t*t*t*tipY,
+              });
+            }
+          }
+        }
+      };
+
+      ctx.save();
+      tracePectoral();
+      if (!isSumie) {
+        const grad = ctx.createLinearGradient(rootLx, rootLy, rootLx + ux * span, rootLy + uy * span);
+        grad.addColorStop(0.0, rgbToRgba(warmBase, 0.90));
+        grad.addColorStop(0.42, rgbToRgba(darkenRgb(warmBase, 1.12), 0.90));
+        grad.addColorStop(0.84, rgbToRgba(ivoryTip, 0.90));
+        grad.addColorStop(1.0, rgbToRgba(ivoryTip, 0.90));
+        ctx.fillStyle = grad;
         ctx.fill();
-        ctx.shadowBlur = 0;
+      } else {
+        ctx.fillStyle = rgbToRgba(ivoryTip, 0.90);
+        ctx.fill();
       }
 
-      const rayCount = 7;
-      ctx.lineCap = "round";
-      ctx.lineWidth = false ? 0.85 : 0.70;
-      ctx.strokeStyle =
-        false
-          ? "rgba(24, 18, 14, 0.42)"
-          : style === "sumie"
-            ? isLight
-              ? "rgba(20, 18, 16, 0.38)"
-              : "rgba(236, 228, 214, 0.36)"
-            : isLight
-              ? "rgba(92, 68, 44, 0.40)"
-              : "rgba(184, 160, 122, 0.40)";
+      ctx.save();
+      tracePectoral();
+      ctx.clip();
+      const rootMidX = (rootLx + rootTx) * 0.5;
+      const rootMidY = (rootLy + rootTy) * 0.5;
+      if (isSumie) {
+        const rootWash = ctx.createRadialGradient(rootMidX, rootMidY, span * 0.02, rootMidX, rootMidY, span * 0.52);
+        rootWash.addColorStop(0.0, rgbToRgba(nightTint([12, 11, 11]), isLight ? 0.94 : 0.78));
+        rootWash.addColorStop(0.45, rgbToRgba(nightTint([48, 44, 42]), isLight ? 0.44 : 0.32));
+        rootWash.addColorStop(1.0, rgbToRgba(ivoryTip, 0.0));
+        ctx.fillStyle = rootWash;
+        ctx.fillRect(rootMidX - span * 1.4, rootMidY - span * 1.4, span * 2.8, span * 2.8);
+      }
+
+      const rayCount = isSumie ? 12 : 16;
       for (let r = 0; r < rayCount; r++) {
-        const u = (r + 0.5) / rayCount;
-        const rBaseX = leadRootX + (trailRootX - leadRootX) * (u * 0.78);
-        const rBaseY = leadRootY + (trailRootY - leadRootY) * (u * 0.78);
-        // Evaluate point along the rounded outer fan cubic Bezier at parameter `u`
-        const inv = 1 - u;
-        const rEndX =
-          inv * inv * inv * tipX +
-          3 * inv * inv * u * fanCtrl1X +
-          3 * inv * u * u * fanCtrl2X +
-          u * u * u * rearTipX;
-        const rEndY =
-          inv * inv * inv * tipY +
-          3 * inv * inv * u * fanCtrl1Y +
-          3 * inv * u * u * fanCtrl2Y +
-          u * u * u * rearTipY;
-        const rCtrlX = (rBaseX + rEndX) * 0.5 + tx * (chord * 0.14 * (1 - u));
-        const rCtrlY = (rBaseY + rEndY) * 0.5 + ty * (chord * 0.14 * (1 - u));
+        const frac = r / (rayCount - 1);
+        const rx0 = rootLx + (rootTx - rootLx) * frac;
+        const ry0 = rootLy + (rootTy - rootLy) * frac;
+        const spread = (0.18 - frac * 0.56) * (isSumie ? 1.02 : 0.94);
+        const rLen = span * (isSumie ? (0.76 - frac * 0.28) : (1.02 - Math.abs(frac - 0.38) * 0.32));
+        const rx1 = rx0 + (ux + fx * spread) * rLen;
+        const ry1 = ry0 + (uy + fy * spread) * rLen;
+        const cx1 = rx0 + (ux + fx * (spread + 0.22)) * (rLen * 0.52);
+        const cy1 = ry0 + (uy + fy * (spread + 0.22)) * (rLen * 0.52);
+
         ctx.beginPath();
-        ctx.moveTo(rBaseX, rBaseY);
-        ctx.quadraticCurveTo(rCtrlX, rCtrlY, rEndX, rEndY);
+        ctx.moveTo(rx0, ry0);
+        ctx.quadraticCurveTo(cx1, cy1, rx1, ry1);
+        ctx.strokeStyle = rayCol;
+        ctx.lineWidth = Math.max(0.65, fish.maxHalfWidth * (isSumie ? (0.015 * (1 - frac * 0.45)) : 0.010));
+        ctx.stroke();
+
+        if (isSumie && r < rayCount - 1) {
+          const inkLen = rLen * (0.62 + 0.18 * Math.sin(r * 2.1));
+          ctx.beginPath();
+          ctx.moveTo(rootMidX, rootMidY);
+          ctx.quadraticCurveTo(
+            rx0 + (ux + fx * (spread + 0.18)) * (inkLen * 0.55),
+            ry0 + (uy + fy * (spread + 0.18)) * (inkLen * 0.55),
+            rx0 + (ux + fx * spread) * inkLen,
+            ry0 + (uy + fy * spread) * inkLen
+          );
+          ctx.strokeStyle = isLight ? "rgba(12, 11, 11, 0.56)" : "rgba(6, 12, 20, 0.38)";
+          ctx.lineWidth = Math.max(1.4, fish.maxHalfWidth * 0.034 * (1 - frac * 0.38));
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+
+      if (isSumie) {
+        this.strokeCalligraphicPolyline(ctx, leadPts, finOutlineW * 1.25, outlineRgb, isLight ? 0.96 : 0.80, fish.seed + side * 3.7, false);
+        tracePectoral();
+        ctx.strokeStyle = rgbToRgba(outlineRgb, isLight ? 0.34 : 0.28);
+        ctx.lineWidth = finOutlineW * 0.36;
+        ctx.stroke();
+      } else {
+        tracePectoral();
+        ctx.strokeStyle = finStroke;
+        ctx.lineWidth = finOutlineW;
+        ctx.lineJoin = "round";
         ctx.stroke();
       }
       ctx.restore();
+    }
 
-      // Rounded outer fan rim & trailing margin stroke
+    // === 2. PELVIC FINS (asymmetrically flared pointed ink-rooted brushes in S2; soft teardrops in S1) ===
+    const pelS0 = isSumie ? 0.48 : 0.51;
+    const pelS1 = isSumie ? 0.58 : 0.59;
+    const pelLead = this.sampleSpineFrame(fish, pelS0);
+    const pelTrail = this.sampleSpineFrame(fish, pelS1);
+    const pelHw0 = koiBodyHalfWidth(pelS0, fish.maxHalfWidth);
+    const pelHw1 = koiBodyHalfWidth(pelS1, fish.maxHalfWidth);
+
+    for (const side of [-1, 1] as const) {
+      const asym = isSumie && side < 0 ? 1.28 : 0.88;
+      const pelSpan = fish.maxHalfWidth * (isSumie ? 0.36 * asym : 0.21);
+      const r0x = pelLead.x + pelLead.nx * (side * pelHw0 * 0.86);
+      const r0y = pelLead.y + pelLead.ny * (side * pelHw0 * 0.86);
+      const r1x = pelTrail.x + pelTrail.nx * (side * pelHw1 * 0.84);
+      const r1y = pelTrail.y + pelTrail.ny * (side * pelHw1 * 0.84);
+      const tipX = r1x + pelTrail.nx * (side * pelSpan * 0.90) - pelTrail.tx * (pelSpan * (isSumie ? 1.15 : 0.74));
+      const tipY = r1y + pelTrail.ny * (side * pelSpan * 0.90) - pelTrail.ty * (pelSpan * (isSumie ? 1.15 : 0.74));
+
+      ctx.save();
       ctx.beginPath();
-      ctx.moveTo(tipX, tipY);
-      ctx.bezierCurveTo(fanCtrl1X, fanCtrl1Y, fanCtrl2X, fanCtrl2Y, rearTipX, rearTipY);
-      ctx.quadraticCurveTo(trailCtrlX, trailCtrlY, trailRootX, trailRootY);
-      ctx.lineWidth = false ? 1.15 : 0.80;
-      ctx.strokeStyle =
-        isLight
-          ? "rgba(96, 72, 46, 0.36)"
-          : rgbToRgba(darkenRgb([214, 194, 160], koiExposure), 0.34);
-      ctx.stroke();
+      ctx.moveTo(r0x, r0y);
+      ctx.bezierCurveTo(
+        r0x + pelLead.nx * (side * pelSpan * 1.18) - pelLead.tx * (pelSpan * 0.04),
+        r0y + pelLead.ny * (side * pelSpan * 1.18) - pelLead.ty * (pelSpan * 0.04),
+        tipX + pelTrail.nx * (side * pelSpan * 0.42) + pelTrail.tx * (pelSpan * 0.44),
+        tipY + pelTrail.ny * (side * pelSpan * 0.42) + pelTrail.ty * (pelSpan * 0.44),
+        tipX,
+        tipY
+      );
+      ctx.bezierCurveTo(
+        tipX - pelTrail.nx * (side * pelSpan * 0.14) + pelTrail.tx * (pelSpan * 0.30),
+        tipY - pelTrail.ny * (side * pelSpan * 0.14) + pelTrail.ty * (pelSpan * 0.30),
+        r1x + pelTrail.nx * (side * pelSpan * 0.28) - pelTrail.tx * (pelSpan * 0.36),
+        r1y + pelTrail.ny * (side * pelSpan * 0.28) - pelTrail.ty * (pelSpan * 0.36),
+        r1x,
+        r1y
+      );
+      ctx.closePath();
 
-      // Thickened anterior leading edge ray (*Munabire* leading spine)
-      ctx.beginPath();
-      ctx.moveTo(leadRootX, leadRootY);
-      ctx.quadraticCurveTo(leadCtrlX, leadCtrlY, tipX, tipY);
-      ctx.lineWidth = 1.22;
-      ctx.strokeStyle =
-        isLight
-          ? "rgba(80, 58, 34, 0.56)"
-          : rgbToRgba(darkenRgb([228, 208, 174], koiExposure), 0.50);
-      ctx.stroke();
+      const pg = ctx.createLinearGradient(r0x, r0y, tipX, tipY);
+      pg.addColorStop(0.0, rgbToRgba(isSumie ? nightTint([24, 22, 22]) : warmBase, 0.94));
+      pg.addColorStop(0.45, rgbToRgba(ivoryTip, 0.96));
+      pg.addColorStop(1.0, rgbToRgba(ivoryTip, 0.98));
+      ctx.fillStyle = pg;
+      ctx.fill();
 
+      for (let k = 1; k <= 4; k++) {
+        const f = k / 5;
+        const sx = r0x + (r1x - r0x) * f;
+        const sy = r0y + (r1y - r0y) * f;
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.quadraticCurveTo(
+          sx + pelLead.nx * (side * pelSpan * 0.48),
+          sy + pelLead.ny * (side * pelSpan * 0.48),
+          sx + (tipX - r0x) * (0.70 - f * 0.18),
+          sy + (tipY - r0y) * (0.70 - f * 0.18)
+        );
+        ctx.strokeStyle = rayCol;
+        ctx.lineWidth = Math.max(0.65, fish.maxHalfWidth * 0.009);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = finStroke;
+      ctx.lineWidth = finOutlineW * (isSumie ? 0.56 : 0.78);
+      ctx.stroke();
       ctx.restore();
-    };
-
-    const pecHw = koiBodyHalfWidth(pecNode.s, fish.maxHalfWidth);
-    const pecChord = fish.bodyLength * 0.138;
-    for (const side of [-1, 1]) {
-      // Asymmetric phase + turn-feathering so left and right pectoral fins never flap in rigid lockstep
-      const sideFlutter = Math.sin(fish.finPhase + (side < 0 ? 0 : 0.85)) * 0.11;
-      const turnExtension = 1.0 + side * turnBias * 0.28;
-      const pecSpan =
-        fish.maxHalfWidth * (1.14 + sideFlutter) * fish.finSpanFactor * turnExtension;
-      const pecSweep = fish.bodyLength * (0.064 - sideFlutter * 0.20 + side * turnBias * 0.022);
-      drawRoundedFanFin(
-        pecNode.x,
-        pecNode.y,
-        pecNode.tx,
-        pecNode.ty,
-        pecNode.nx,
-        pecNode.ny,
-        pecHw,
-        side,
-        pecSpan,
-        pecChord,
-        pecSweep,
-        fish.colors.hasMotoguro
-      );
     }
 
-    const venHw = koiBodyHalfWidth(venNode.s, fish.maxHalfWidth);
-    const venChord = fish.bodyLength * 0.092;
-    for (const side of [-1, 1]) {
-      const sideFlutter = Math.sin(fish.finPhase - 1.1 + (side < 0 ? 0 : 0.65)) * 0.075;
-      const venSpan = fish.maxHalfWidth * (0.66 + sideFlutter) * fish.finSpanFactor;
-      const venSweep = fish.bodyLength * (0.072 - sideFlutter * 0.18);
-      drawRoundedFanFin(
-        venNode.x,
-        venNode.y,
-        venNode.tx,
-        venNode.ty,
-        venNode.nx,
-        venNode.ny,
-        venHw,
-        side,
-        venSpan,
-        venChord,
-        venSweep,
-        false
-      );
-    }
+    // === 3. SINGLE TUCKED ANAL FIN (s = 0.685..0.748) ===
+    const analSide: -1 | 1 = -1;
+    const aLead = this.sampleSpineFrame(fish, 0.685);
+    const aTrail = this.sampleSpineFrame(fish, 0.748);
+    const aHw0 = koiBodyHalfWidth(0.685, fish.maxHalfWidth);
+    const aHw1 = koiBodyHalfWidth(0.748, fish.maxHalfWidth);
+    const aSpan = fish.maxHalfWidth * (isSumie ? 0.24 : 0.14);
+    const ar0x = aLead.x + aLead.nx * (analSide * aHw0 * 0.84);
+    const ar0y = aLead.y + aLead.ny * (analSide * aHw0 * 0.84);
+    const ar1x = aTrail.x + aTrail.nx * (analSide * aHw1 * 0.84);
+    const ar1y = aTrail.y + aTrail.ny * (analSide * aHw1 * 0.84);
+    const aTipX = ar1x + aTrail.nx * (analSide * aSpan * 0.86) - aTrail.tx * (aSpan * 1.10);
+    const aTipY = ar1y + aTrail.ny * (analSide * aSpan * 0.86) - aTrail.ty * (aSpan * 1.10);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(ar0x, ar0y);
+    ctx.quadraticCurveTo(
+      ar0x + aLead.nx * (analSide * aSpan * 1.06) - aLead.tx * (aSpan * 0.18),
+      ar0y + aLead.ny * (analSide * aSpan * 1.06) - aLead.ty * (aSpan * 0.18),
+      aTipX,
+      aTipY
+    );
+    ctx.quadraticCurveTo(
+      ar1x + aTrail.nx * (analSide * aSpan * 0.28) - aTrail.tx * (aSpan * 0.42),
+      ar1y + aTrail.ny * (analSide * aSpan * 0.28) - aTrail.ty * (aSpan * 0.42),
+      ar1x,
+      ar1y
+    );
+    ctx.closePath();
+    ctx.fillStyle = rgbToRgba(ivoryTip, 0.94);
+    ctx.fill();
+    ctx.strokeStyle = finStroke;
+    ctx.lineWidth = finOutlineW * 0.56;
+    ctx.stroke();
+    ctx.restore();
   }
 
-  /**
-   * Paints a flowing, rounded bilobed veil Caudal (Tail) fin that anchors deep inside the
-   * muscular peduncle (`spine[n-3]..spine[n-1]`) and sways continuously with the rear peduncle.
-   */
   private paintKoiCaudalFin(
     ctx: CanvasRenderingContext2D,
     fish: KoiFish,
@@ -4287,494 +4930,388 @@ export class AsciiKoiPondRenderer {
     koiExposure = 1.0
   ): void {
     const style = this.artStyle;
+    const fin = computeCaudalFin(fish);
+    const cfg = CAUDAL_FIN_CONFIG;
     const spine = fish.spine;
     const n = spine.length;
     const tail = spine[n - 1];
-    const tailHw = koiBodyHalfWidth(tail.s, fish.maxHalfWidth);
-    const rootNode = spine[n - 2];
-    const rootHw = koiBodyHalfWidth(rootNode.s, fish.maxHalfWidth) * 0.94;
-
-    const tailLen = fish.bodyLength * 0.30 * fish.tailLengthFactor;
-    const spread = fish.maxHalfWidth * 1.18 * fish.finSpanFactor;
-    const sway = Math.sin(fish.phase - 1.9) * fish.maxHalfWidth * 0.48;
-    const sway2 = Math.cos(fish.phase - 2.5) * fish.maxHalfWidth * 0.24;
-
-    const bx = -tail.tx;
-    const by = -tail.ty;
-    const nx = tail.nx;
-    const ny = tail.ny;
-
-    const leftRootX = rootNode.x - rootNode.nx * rootHw;
-    const leftRootY = rootNode.y - rootNode.ny * rootHw;
-    const rightRootX = rootNode.x + rootNode.nx * rootHw;
-    const rightRootY = rootNode.y + rootNode.ny * rootHw;
-
-    const leftLobeX = tail.x + bx * (tailLen * 0.92) + nx * (sway - spread * 0.88);
-    const leftLobeY = tail.y + by * (tailLen * 0.92) + ny * (sway - spread * 0.88);
-    const rightLobeX = tail.x + bx * (tailLen * 0.92) + nx * (sway + spread * 0.88);
-    const rightLobeY = tail.y + by * (tailLen * 0.92) + ny * (sway + spread * 0.88);
-    const notchX = tail.x + bx * (tailLen * 0.64) + nx * (sway * 0.72 + sway2 * 0.28);
-    const notchY = tail.y + by * (tailLen * 0.64) + ny * (sway * 0.72 + sway2 * 0.28);
-
-    // First Bezier control points stay tangent to the peduncle at spine[n-1] so the tail flares out behind the body without a protruding body tongue
-    const ctrl1Offset = tailHw * 1.15 + spread * 0.32;
 
     ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(leftRootX, leftRootY);
-    ctx.bezierCurveTo(
-      tail.x + bx * (tailLen * 0.18) + nx * (sway * 0.24 - ctrl1Offset),
-      tail.y + by * (tailLen * 0.18) + ny * (sway * 0.24 - ctrl1Offset),
-      tail.x + bx * (tailLen * 0.84) + nx * (sway - spread * 1.05),
-      tail.y + by * (tailLen * 0.84) + ny * (sway - spread * 1.05),
-      leftLobeX,
-      leftLobeY
-    );
-    ctx.bezierCurveTo(
-      tail.x + bx * (tailLen * 1.02) + nx * (sway - spread * 0.42),
-      tail.y + by * (tailLen * 1.02) + ny * (sway - spread * 0.42),
-      notchX - nx * (spread * 0.18),
-      notchY - ny * (spread * 0.18),
-      notchX,
-      notchY
-    );
-    ctx.bezierCurveTo(
-      notchX + nx * (spread * 0.18),
-      notchY + ny * (spread * 0.18),
-      tail.x + bx * (tailLen * 1.02) + nx * (sway + spread * 0.42),
-      tail.y + by * (tailLen * 1.02) + ny * (sway + spread * 0.42),
-      rightLobeX,
-      rightLobeY
-    );
-    ctx.bezierCurveTo(
-      tail.x + bx * (tailLen * 0.84) + nx * (sway + spread * 1.05),
-      tail.y + by * (tailLen * 0.84) + ny * (sway + spread * 1.05),
-      tail.x + bx * (tailLen * 0.18) + nx * (sway * 0.24 + ctrl1Offset),
-      tail.y + by * (tailLen * 0.18) + ny * (sway * 0.24 + ctrl1Offset),
-      rightRootX,
-      rightRootY
-    );
-    ctx.closePath();
 
-    const tailGrad = ctx.createRadialGradient(
-      rootNode.x,
-      rootNode.y,
-      tailLen * 0.04,
-      tail.x + bx * (tailLen * 0.25),
-      tail.y + by * (tailLen * 0.25),
-      tailLen * 1.08
+    // 1. Soft root anchoring shadow under fin base (alpha ~0.25)
+    const rootShadowRadius = fin.finLength * cfg.rootZonePct * 1.4;
+    const rootShadow = ctx.createRadialGradient(
+      tail.x,
+      tail.y,
+      0,
+      tail.x,
+      tail.y,
+      rootShadowRadius
     );
-    if (false) {
-      tailGrad.addColorStop(0.0, rgbToRgba(darkenRgb(basePigment, 0.92), 1.0));
-      tailGrad.addColorStop(0.38, "rgba(248, 236, 208, 0.92)");
-      tailGrad.addColorStop(0.75, "rgba(234, 216, 180, 0.80)");
-      tailGrad.addColorStop(1.0, "rgba(220, 196, 152, 0.62)");
-    } else if (style === "sumie") {
-      tailGrad.addColorStop(0.0, rgbToRgba(darkenRgb(basePigment, 0.90), 1.0));
-      tailGrad.addColorStop(0.45, isLight ? "rgba(52, 46, 40, 0.76)" : rgbToRgba(darkenRgb([216, 208, 196], koiExposure), 0.74));
-      tailGrad.addColorStop(0.78, isLight ? "rgba(76, 70, 64, 0.50)" : rgbToRgba(darkenRgb([182, 174, 162], koiExposure), 0.48));
-      tailGrad.addColorStop(1.0, isLight ? "rgba(96, 88, 80, 0.22)" : rgbToRgba(darkenRgb([148, 140, 128], koiExposure), 0.20));
+    rootShadow.addColorStop(0.0, `rgba(0, 0, 0, ${(cfg.baseShadowAlpha * koiExposure).toFixed(3)})`);
+    rootShadow.addColorStop(1.0, "rgba(0, 0, 0, 0)");
+    ctx.fillStyle = rootShadow;
+    ctx.beginPath();
+    ctx.arc(tail.x, tail.y, rootShadowRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 2. Translucent fin membrane fill with linear root-to-margin gradient along fin axis
+    const pc = CAUDAL_FIN_CONFIG.principalRayCount;
+    const tc = pc * 2;
+    const gx0 = (fin.baseX[0] + fin.baseX[pc - 1]) * 0.5;
+    const gy0 = (fin.baseY[0] + fin.baseY[pc - 1]) * 0.5;
+    const gx1 = (fin.tipX[0] + fin.tipX[tc - 1]) * 0.5;
+    const gy1 = (fin.tipY[0] + fin.tipY[tc - 1]) * 0.5;
+    const tailGrad = ctx.createLinearGradient(gx0, gy0, gx1, gy1);
+
+    if (style === "sumie") {
+      tailGrad.addColorStop(0.0, rgbToRgba(darkenRgb(basePigment, 0.92), 0.90));
+      tailGrad.addColorStop(cfg.rootZonePct, rgbToRgba(darkenRgb(basePigment, 0.94), 0.90));
+      tailGrad.addColorStop(0.48, isLight ? "rgba(235, 226, 210, 0.90)" : rgbToRgba(darkenRgb([216, 208, 196], koiExposure), 0.90));
+      tailGrad.addColorStop(0.82, isLight ? "rgba(224, 214, 196, 0.90)" : rgbToRgba(darkenRgb([182, 174, 162], koiExposure), 0.90));
+      tailGrad.addColorStop(1.0, isLight ? "rgba(212, 200, 180, 0.90)" : rgbToRgba(darkenRgb([148, 140, 128], koiExposure), 0.90));
     } else {
-      tailGrad.addColorStop(0.0, rgbToRgba(darkenRgb(basePigment, 0.92), 1.0));
-      tailGrad.addColorStop(0.24, rgbToRgba(darkenRgb(basePigment, 0.95), 0.93));
-      tailGrad.addColorStop(0.58, rgbToRgba(darkenRgb([250, 240, 220], koiExposure), 0.80));
-      tailGrad.addColorStop(1.0, rgbToRgba(darkenRgb([236, 218, 186], koiExposure), 0.40));
+      tailGrad.addColorStop(0.0, rgbToRgba(darkenRgb(basePigment, 0.92), 0.90));
+      tailGrad.addColorStop(cfg.rootZonePct, rgbToRgba(darkenRgb(basePigment, 0.95), 0.90));
+      tailGrad.addColorStop(0.50, rgbToRgba(darkenRgb([250, 240, 220], koiExposure), 0.90));
+      tailGrad.addColorStop(0.82, rgbToRgba(darkenRgb([242, 228, 202], koiExposure), 0.90));
+      tailGrad.addColorStop(1.0, rgbToRgba(darkenRgb([236, 218, 186], koiExposure), 0.90));
     }
+
+    traceCaudalFinPath(ctx, fin);
     ctx.fillStyle = tailGrad;
     ctx.fill();
 
-    // High-definition radiating caudal fin rays emerging visibly from behind the compact peduncle tip
-    const rayOriginX = tail.x + bx * (tailHw * 0.25) + nx * (sway * 0.24);
-    const rayOriginY = tail.y + by * (tailHw * 0.25) + ny * (sway * 0.24);
-    ctx.lineCap = "round";
-    ctx.lineWidth = false ? 0.9 : 0.72;
+    // 2b. Outer membrane contour stroke
+    ctx.lineWidth = style === "sumie" ? 1.6 : 1.25;
     ctx.strokeStyle =
-      false
-        ? "rgba(24, 18, 14, 0.44)"
-        : style === "sumie"
-          ? isLight
-            ? "rgba(20, 18, 16, 0.40)"
-            : "rgba(232, 224, 210, 0.38)"
-          : isLight
-            ? "rgba(88, 64, 40, 0.40)"
-            : "rgba(186, 162, 124, 0.38)";
-    for (let r = -5; r <= 5; r++) {
-      if (r === 0) continue;
-      const u = r / 5;
-      const tipX =
-        tail.x +
-        bx * (tailLen * (0.72 + Math.abs(u) * 0.18)) +
-        nx * (sway * 0.86 + u * spread * 0.82);
-      const tipY =
-        tail.y +
-        by * (tailLen * (0.72 + Math.abs(u) * 0.18)) +
-        ny * (sway * 0.86 + u * spread * 0.82);
+      style === "sumie"
+        ? isLight
+          ? "rgba(22, 18, 16, 0.82)"
+          : "rgba(235, 225, 210, 0.75)"
+        : isLight
+          ? "rgba(62, 44, 26, 0.70)"
+          : "rgba(215, 195, 160, 0.60)";
+    ctx.stroke();
+
+    // 2c. In Sumi-e style, emphasize outer flank rays with calligraphic ink stroke
+    if (style === "sumie") {
       ctx.beginPath();
-      ctx.moveTo(rayOriginX + nx * (u * tailHw * 0.45), rayOriginY + ny * (u * tailHw * 0.45));
-      ctx.quadraticCurveTo(
-        tail.x + bx * (tailLen * 0.36) + nx * (sway * 0.48 + u * spread * 0.46),
-        tail.y + by * (tailLen * 0.36) + ny * (sway * 0.48 + u * spread * 0.46),
-        tipX,
-        tipY
-      );
+      ctx.moveTo(fin.flankX0[0], fin.flankY0[0]);
+      ctx.quadraticCurveTo(fin.flankCtrlX[0], fin.flankCtrlY[0], fin.flankX1[0], fin.flankY1[0]);
+      ctx.quadraticCurveTo(fin.flankCtrlX[1], fin.flankCtrlY[1], fin.tipX[0], fin.tipY[0]);
+
+      ctx.moveTo(fin.tipX[tc - 1], fin.tipY[tc - 1]);
+      ctx.quadraticCurveTo(fin.flankCtrlX[2], fin.flankCtrlY[2], fin.flankX1[2], fin.flankY1[2]);
+      ctx.quadraticCurveTo(fin.flankCtrlX[3], fin.flankCtrlY[3], fin.flankX1[3], fin.flankY1[3]);
+      ctx.lineWidth = 2.4;
+      ctx.strokeStyle = isLight ? "rgba(18, 16, 14, 0.90)" : "rgba(240, 230, 215, 0.85)";
       ctx.stroke();
     }
 
-    // Outer caudal fin contour (joins `strokeBodyFlanksOpenTail` at `leftRoot` and `rightRoot` seamlessly)
-    ctx.beginPath();
-    ctx.moveTo(leftRootX, leftRootY);
-    ctx.bezierCurveTo(
-      tail.x + bx * (tailLen * 0.18) + nx * (sway * 0.24 - ctrl1Offset),
-      tail.y + by * (tailLen * 0.18) + ny * (sway * 0.24 - ctrl1Offset),
-      tail.x + bx * (tailLen * 0.84) + nx * (sway - spread * 1.05),
-      tail.y + by * (tailLen * 0.84) + ny * (sway - spread * 1.05),
-      leftLobeX,
-      leftLobeY
-    );
-    ctx.bezierCurveTo(
-      tail.x + bx * (tailLen * 1.02) + nx * (sway - spread * 0.42),
-      tail.y + by * (tailLen * 1.02) + ny * (sway - spread * 0.42),
-      notchX - nx * (spread * 0.18),
-      notchY - ny * (spread * 0.18),
-      notchX,
-      notchY
-    );
-    ctx.bezierCurveTo(
-      notchX + nx * (spread * 0.18),
-      notchY + ny * (spread * 0.18),
-      tail.x + bx * (tailLen * 1.02) + nx * (sway + spread * 0.42),
-      tail.y + by * (tailLen * 1.02) + ny * (sway + spread * 0.42),
-      rightLobeX,
-      rightLobeY
-    );
-    ctx.bezierCurveTo(
-      tail.x + bx * (tailLen * 0.84) + nx * (sway + spread * 1.05),
-      tail.y + by * (tailLen * 0.84) + ny * (sway + spread * 1.05),
-      tail.x + bx * (tailLen * 0.18) + nx * (sway * 0.24 + ctrl1Offset),
-      tail.y + by * (tailLen * 0.18) + ny * (sway * 0.24 + ctrl1Offset),
-      rightRootX,
-      rightRootY
-    );
-    ctx.lineWidth = false ? 1.5 : style === "sumie" ? 1.25 : 1.05;
-    ctx.strokeStyle =
-      false
-        ? "#18120e"
-        : style === "sumie"
-          ? isLight
-            ? "rgba(24, 20, 18, 0.68)"
-            : "rgba(220, 212, 198, 0.58)"
-          : isLight
-            ? "rgba(86, 64, 40, 0.46)"
-            : rgbToRgba(darkenRgb([224, 204, 168], koiExposure), 0.42);
-    ctx.stroke();
+    // 3. High-definition radiating & bifurcating rays strictly clipped to membrane
+    const rayStrokeRgb: [number, number, number] =
+      style === "sumie"
+        ? isLight
+          ? [20, 18, 16]
+          : [232, 224, 210]
+        : isLight
+          ? [88, 64, 40]
+          : [186, 162, 124];
+    strokeCaudalFinRays(ctx, fin, rayStrokeRgb, koiExposure);
+
     ctx.restore();
   }
 
-  /**
-   * Paints a ribbed, anatomical top-view Japanese Koi Dorsal Fin Sail (*Sebire*) along `spine[5..15]`:
-   * - Non-zero anterior leading spine (*Kado*) at `k = 0` rising behind the shoulder and tapering smoothly toward the peduncle
-   * - Continuous, C-infinity smooth camber + traveling wave sway (zero sign-flipping or threshold popping)
-   * - Semi-opaque silk membrane and 9 transverse anatomical fin rays connecting the spine base to the crest
-   */
   private paintKoiDorsalFin(
     ctx: CanvasRenderingContext2D,
     fish: KoiFish,
     isLight: boolean,
-    koiExposure = 1.0
+    isSumie: boolean,
+    shiroRgb: [number, number, number],
+    outlineRgb: [number, number, number],
+    _nightDepth: number
   ): void {
-    const style = this.artStyle;
-    const spine = fish.spine;
-    const startIdx = 5;
-    const endIdx = 15;
-    const spanCount = endIdx - startIdx;
+    // Wider translucent ivory dorsal ribbon (0.148 * hw, 0.88 alpha) with clear diagonal rays — legible in Day & Night!
+    const sStart = 0.36;
+    const sEnd = 0.76;
+    const steps = 22;
+    const maxRibbonW = fish.maxHalfWidth * (isSumie ? 0.148 : 0.144);
+    const swayDir = Math.sin(fish.phase - 1.2) * 0.045 + 0.065;
 
-    const baseX = new Float32Array(spanCount + 1);
-    const baseY = new Float32Array(spanCount + 1);
-    const crestX = new Float32Array(spanCount + 1);
-    const crestY = new Float32Array(spanCount + 1);
+    const leftPts: Array<{ x: number; y: number }> = [];
+    const rightPts: Array<{ x: number; y: number }> = [];
+    const centerPts: Array<{ x: number; y: number; tx: number; ty: number; nx: number; ny: number }> = [];
 
-    // Spine-coupled dorsal fin camber: bends directly with local spine lateral displacement & curvature
-    const camberBias = koiClamp(fish.curvature * 0.36, -0.18, 0.18);
-    for (let i = startIdx; i <= endIdx; i++) {
-      const k = i - startIdx;
-      const u = k / spanCount;
-      // Rises smoothly from the spine at u = 0 (`env = 0`) and tapers to the rear attachment (`u = 1`)
-      const rise = Math.sin(koiClamp(u / 0.24, 0, 1) * (Math.PI * 0.5));
-      const taper = Math.sin(koiClamp((1.0 - u) / 0.82, 0, 1) * (Math.PI * 0.5));
-      const env = rise * taper * 0.82;
-      const node = spine[i];
-
-      const waveSway = Math.sin(fish.phase - u * 2.2) * (0.05 + 0.09 * u);
-      const signedSway = camberBias + waveSway;
-      const sailReach = signedSway * fish.maxHalfWidth * env;
-
-      baseX[k] = node.x;
-      baseY[k] = node.y;
-      crestX[k] = node.x + node.nx * sailReach;
-      crestY[k] = node.y + node.ny * sailReach;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const s = sStart + (sEnd - sStart) * t;
+      const frame = this.sampleSpineFrame(fish, s);
+      const widthEnv =
+        t < 0.09
+          ? Math.sin((t / 0.09) * Math.PI * 0.5)
+          : Math.pow(1 - (t - 0.09) / 0.91, 0.62);
+      const w = maxRibbonW * widthEnv;
+      const latDrift = Math.sin(t * Math.PI * 1.15) * fish.maxHalfWidth * swayDir;
+      const cx = frame.x + frame.nx * latDrift;
+      const cy = frame.y + frame.ny * latDrift;
+      centerPts.push({ x: cx, y: cy, tx: frame.tx, ty: frame.ty, nx: frame.nx, ny: frame.ny });
+      leftPts.push({ x: cx - frame.nx * w * 0.42, y: cy - frame.ny * w * 0.42 });
+      rightPts.push({ x: cx + frame.nx * w * 0.92, y: cy + frame.ny * w * 0.92 });
     }
+
+    const traceRibbon = () => {
+      ctx.beginPath();
+      ctx.moveTo(centerPts[0].x + centerPts[0].tx * (maxRibbonW * 0.34), centerPts[0].y + centerPts[0].ty * (maxRibbonW * 0.34));
+      for (let i = 0; i <= steps; i++) ctx.lineTo(rightPts[i].x, rightPts[i].y);
+      ctx.lineTo(centerPts[steps].x - centerPts[steps].tx * (maxRibbonW * 0.52), centerPts[steps].y - centerPts[steps].ty * (maxRibbonW * 0.52));
+      for (let i = steps; i >= 0; i--) ctx.lineTo(leftPts[i].x, leftPts[i].y);
+      ctx.closePath();
+    };
 
     ctx.save();
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
+    ctx.save();
+    ctx.translate(fish.maxHalfWidth * 0.032, fish.maxHalfWidth * 0.024);
+    traceRibbon();
+    ctx.fillStyle = isLight ? "rgba(18, 12, 8, 0.24)" : "rgba(0, 0, 0, 0.36)";
+    ctx.fill();
+    ctx.restore();
 
-    // 1. Subtle basal attachment shadow along the spine root
-    ctx.beginPath();
-    for (let k = 0; k <= spanCount; k++) {
-      if (k === 0) ctx.moveTo(baseX[k], baseY[k]);
-      else ctx.lineTo(baseX[k], baseY[k]);
-    }
-    ctx.lineWidth = 2.4;
-    ctx.strokeStyle = isLight ? "rgba(48, 34, 20, 0.22)" : "rgba(0, 0, 0, 0.38)";
-    ctx.stroke();
-
-    // 2. Ribbed silk dorsal sail membrane (rising up the anterior *Kado* spine at k = 0 first!)
-    ctx.beginPath();
-    ctx.moveTo(baseX[0], baseY[0]);
-    ctx.lineTo(crestX[0], crestY[0]);
-    for (let k = 1; k <= spanCount; k++) {
-      ctx.lineTo(crestX[k], crestY[k]);
-    }
-    for (let k = spanCount; k >= 0; k--) {
-      ctx.lineTo(baseX[k], baseY[k]);
-    }
-    ctx.closePath();
-
-    ctx.fillStyle =
-      false
-        ? "rgba(248, 238, 212, 0.86)"
-        : style === "sumie"
-          ? isLight
-            ? "rgba(42, 38, 34, 0.58)"
-            : "rgba(218, 210, 196, 0.54)"
-          : isLight
-            ? "rgba(252, 244, 226, 0.82)"
-            : rgbToRgba(darkenRgb([244, 232, 206], koiExposure), 0.72);
+    traceRibbon();
+    ctx.fillStyle = rgbToRgba(darkenRgb(shiroRgb, isLight ? 1.04 : 1.14), 0.90);
     ctx.fill();
 
-    // 3. 9 Transverse anatomical dorsal fin rays connecting spine base to the dorsal crest
-    ctx.lineWidth = false ? 0.95 : 0.76;
-    ctx.strokeStyle =
-      false
-        ? "rgba(24, 18, 14, 0.55)"
-        : style === "sumie"
-          ? isLight
-            ? "rgba(20, 18, 16, 0.48)"
-            : "rgba(236, 228, 214, 0.44)"
-          : isLight
-            ? "rgba(82, 58, 36, 0.46)"
-            : "rgba(196, 172, 134, 0.46)";
-    for (let k = 1; k < spanCount; k++) {
-      const midX = (baseX[k] + crestX[k]) * 0.5 + spine[startIdx + k].tx * 1.4;
-      const midY = (baseY[k] + crestY[k]) * 0.5 + spine[startIdx + k].ty * 1.4;
+    ctx.save();
+    ctx.clip();
+    for (let i = 1; i < steps; i++) {
+      const p0 = leftPts[i];
+      const p1 = rightPts[Math.min(steps, i + 2)];
+      const mx = (p0.x + p1.x) * 0.5 + centerPts[i].nx * (maxRibbonW * 0.24);
+      const my = (p0.y + p1.y) * 0.5 + centerPts[i].ny * (maxRibbonW * 0.24);
       ctx.beginPath();
-      ctx.moveTo(baseX[k], baseY[k]);
-      ctx.quadraticCurveTo(midX, midY, crestX[k], crestY[k]);
+      ctx.moveTo(p0.x, p0.y);
+      ctx.quadraticCurveTo(mx, my, p1.x, p1.y);
+      ctx.strokeStyle = isLight
+        ? (isSumie ? "rgba(24, 20, 18, 0.52)" : "rgba(104, 76, 48, 0.52)")
+        : "rgba(175, 220, 252, 0.48)";
+      ctx.lineWidth = Math.max(0.65, fish.maxHalfWidth * 0.0085);
       ctx.stroke();
     }
+    ctx.restore();
 
-    // 4. Anterior leading dorsal spine (*Kado*, base[0] -> crest[0]) & undulating upper dorsal crest stroke
-    ctx.beginPath();
-    ctx.moveTo(baseX[0], baseY[0]);
-    ctx.lineTo(crestX[0], crestY[0]);
-    for (let k = 1; k <= spanCount; k++) {
-      const prevX = crestX[k - 1];
-      const prevY = crestY[k - 1];
-      ctx.quadraticCurveTo(prevX, prevY, (prevX + crestX[k]) * 0.5, (prevY + crestY[k]) * 0.5);
+    if (isSumie) {
+      this.strokeCalligraphicPolyline(ctx, rightPts, Math.max(1.5, fish.maxHalfWidth * 0.026), outlineRgb, isLight ? 0.95 : 0.78, fish.seed + 9.1, false);
+      this.strokeCalligraphicPolyline(ctx, leftPts, Math.max(0.6, fish.maxHalfWidth * 0.011), outlineRgb, isLight ? 0.40 : 0.30, fish.seed + 11.4, false);
+    } else {
+      ctx.beginPath();
+      for (let i = 0; i <= steps; i++) {
+        if (i === 0) ctx.moveTo(rightPts[i].x, rightPts[i].y);
+        else ctx.lineTo(rightPts[i].x, rightPts[i].y);
+      }
+      ctx.strokeStyle = rgbToRgba(outlineRgb, isLight ? 0.86 : 0.74);
+      ctx.lineWidth = Math.max(1.2, fish.maxHalfWidth * 0.016);
+      ctx.lineJoin = "round";
+      ctx.stroke();
+
+      ctx.beginPath();
+      for (let i = 0; i <= steps; i++) {
+        if (i === 0) ctx.moveTo(leftPts[i].x, leftPts[i].y);
+        else ctx.lineTo(leftPts[i].x, leftPts[i].y);
+      }
+      ctx.strokeStyle = rgbToRgba(outlineRgb, isLight ? 0.34 : 0.28);
+      ctx.lineWidth = Math.max(0.75, fish.maxHalfWidth * 0.009);
+      ctx.stroke();
     }
-    ctx.lineTo(crestX[spanCount], crestY[spanCount]);
-    ctx.lineWidth = false ? 1.6 : style === "sumie" ? 1.4 : 1.3;
-    ctx.strokeStyle =
-      false
-        ? "rgba(24, 18, 14, 0.88)"
-        : style === "sumie"
-          ? isLight
-            ? "rgba(22, 18, 16, 0.80)"
-            : "rgba(232, 224, 210, 0.72)"
-          : isLight
-            ? "rgba(68, 48, 28, 0.64)"
-            : rgbToRgba(darkenRgb([232, 214, 180], koiExposure), 0.58);
-    ctx.stroke();
-
     ctx.restore();
   }
 
-  /**
-   * Paints authentic Japanese Koi cranial anatomy:
-   * 1. Convex-outward Operculum (gill cover plates, *era-buta*) separating the scaleless head from the muscular shoulder (`s ≈ 0.178..0.238`)
-   * 2. Dorso-lateral eyes positioned anatomically at `s ≈ 0.095` with golden-amber iris ring, dark pupil & corneal catchlight
-   * 3. Sensory barbels (*kuchihige*) rooted strictly inside the upper lip corners (`s ≈ 0.018`, never floating in water)
-   */
   private paintKoiHeadDetails(
     ctx: CanvasRenderingContext2D,
     fish: KoiFish,
-    snoutTipX: number,
-    snoutTipY: number,
     isLight: boolean,
-    koiExposure = 1.0
+    isSumie: boolean,
+    shiroRgb: [number, number, number],
+    outlineRgb: [number, number, number],
+    _nightDepth: number
   ): void {
-    const style = this.artStyle;
-    const spine = fish.spine;
-    ctx.save();
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
+    const strokeCol = rgbToRgba(outlineRgb, isLight ? (isSumie ? 0.95 : 0.88) : 0.74);
+    const lineW = Math.max(1.2, fish.maxHalfWidth * (isSumie ? 0.028 : 0.018));
 
-    // 1. Convex-outward Operculum (Gill Cover Plates) starting dorso-medially behind the temple (`|u| = 0.64`) and sweeping outward to the shoulder margin (`|u| = 0.96`)
-    const gillAnt = { x: 0, y: 0, tx: 0, ty: 0, nx: 0, ny: 0 };
-    const gillMid = { x: 0, y: 0, tx: 0, ty: 0, nx: 0, ny: 0 };
-    const gillPost = { x: 0, y: 0, tx: 0, ty: 0, nx: 0, ny: 0 };
-    for (const side of [-1, 1]) {
-      this.spineToWorld(fish, 0.178, side * 0.64, gillAnt);
-      this.spineToWorld(fish, 0.218, side * 0.95, gillMid);
-      this.spineToWorld(fish, 0.238, side * 0.96, gillPost);
+    // === 1. WARMLY MODELED 3D CHEEK OPERCULA (golden-taupe relief + crescent gill crease in S1; fluid brushed arches in S2!) ===
+    const gFront = this.sampleSpineFrame(fish, 0.176);
+    const gMid = this.sampleSpineFrame(fish, 0.236);
+    const gRear = this.sampleSpineFrame(fish, 0.292);
+    const hwF = koiBodyHalfWidth(0.176, fish.maxHalfWidth);
+    const hwM = koiBodyHalfWidth(0.236, fish.maxHalfWidth);
+    const hwR = koiBodyHalfWidth(0.292, fish.maxHalfWidth);
 
-      // Soft recessed gill-slit shadow
+    const gillShade: [number, number, number] = isLight
+      ? (isSumie ? [196, 184, 170] : [206, 176, 144])
+      : darkenRgb(shiroRgb, 0.76);
+
+    for (const side of [-1, 1] as const) {
+      const fx = gFront.x + gFront.nx * (side * hwF * 0.86);
+      const fy = gFront.y + gFront.ny * (side * hwF * 0.86);
+      const outerX = gMid.x + gMid.nx * (side * hwM * 1.04);
+      const outerY = gMid.y + gMid.ny * (side * hwM * 1.04);
+      const rearTipX = gRear.x + gRear.nx * (side * hwR * 1.02) - gRear.tx * (fish.maxHalfWidth * 0.08);
+      const rearTipY = gRear.y + gRear.ny * (side * hwR * 1.02) - gRear.ty * (fish.maxHalfWidth * 0.08);
+      const innerRearX = gRear.x + gRear.nx * (side * hwR * 0.60) + gRear.tx * (fish.maxHalfWidth * 0.12);
+      const innerRearY = gRear.y + gRear.ny * (side * hwR * 0.60) + gRear.ty * (fish.maxHalfWidth * 0.12);
+      const innerMidX = gMid.x + gMid.nx * (side * hwM * 0.68);
+      const innerMidY = gMid.y + gMid.ny * (side * hwM * 0.68);
+
+      ctx.save();
       ctx.beginPath();
-      ctx.moveTo(gillAnt.x, gillAnt.y);
-      ctx.quadraticCurveTo(gillMid.x, gillMid.y, gillPost.x, gillPost.y);
-      ctx.lineWidth = 1.9;
-      ctx.strokeStyle = isLight ? "rgba(52, 36, 22, 0.22)" : "rgba(0, 0, 0, 0.36)";
-      ctx.stroke();
-
-      // Crisp operculum plate rim highlight/crease
-      ctx.beginPath();
-      ctx.moveTo(gillAnt.x + gillAnt.tx * 0.8, gillAnt.y + gillAnt.ty * 0.8);
+      ctx.moveTo(fx, fy);
+      ctx.quadraticCurveTo(outerX, outerY, rearTipX, rearTipY);
       ctx.quadraticCurveTo(
-        gillMid.x + gillMid.tx * 0.8,
-        gillMid.y + gillMid.ty * 0.8,
-        gillPost.x + gillPost.tx * 0.8,
-        gillPost.y + gillPost.ty * 0.8
+        gRear.x + gRear.nx * (side * hwR * 0.84) - gRear.tx * (fish.maxHalfWidth * 0.02),
+        gRear.y + gRear.ny * (side * hwR * 0.84) - gRear.ty * (fish.maxHalfWidth * 0.02),
+        innerRearX,
+        innerRearY
       );
-      ctx.lineWidth = false ? 1.15 : 0.85;
-      ctx.strokeStyle =
-        false
-          ? "rgba(24, 18, 14, 0.58)"
-          : isLight
-            ? "rgba(86, 62, 38, 0.42)"
-            : "rgba(232, 214, 180, 0.36)";
+      ctx.quadraticCurveTo(innerMidX, innerMidY, fx, fy);
+      ctx.closePath();
+
+      const gg = ctx.createLinearGradient(innerMidX, innerMidY, outerX, outerY);
+      gg.addColorStop(0.0, rgbToRgba(shiroRgb, 0.35));
+      gg.addColorStop(0.45, rgbToRgba(darkenRgb(shiroRgb, 0.90), 0.92));
+      gg.addColorStop(1.0, rgbToRgba(gillShade, 0.98));
+      ctx.fillStyle = gg;
+      ctx.fill();
+
+      ctx.save();
+      ctx.clip();
+      for (let st = 0; st < 4; st++) {
+        const f = 0.22 + st * 0.20;
+        const p0x = fx + (innerRearX - fx) * f;
+        const p0y = fy + (innerRearY - fy) * f;
+        const p1x = outerX + (rearTipX - outerX) * (f * 0.94);
+        const p1y = outerY + (rearTipY - outerY) * (f * 0.94);
+        ctx.beginPath();
+        ctx.moveTo(p0x, p0y);
+        ctx.quadraticCurveTo(
+          (p0x + p1x) * 0.5 + gMid.tx * (fish.maxHalfWidth * 0.08),
+          (p0y + p1y) * 0.5 + gMid.ty * (fish.maxHalfWidth * 0.08),
+          p1x,
+          p1y
+        );
+        ctx.strokeStyle = isLight
+          ? (isSumie ? "rgba(24, 20, 18, 0.52)" : "rgba(116, 82, 52, 0.64)")
+          : "rgba(10, 18, 28, 0.46)";
+        ctx.lineWidth = Math.max(0.8, fish.maxHalfWidth * 0.0105);
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      if (isSumie) {
+        const gPts = [
+          { x: fx, y: fy },
+          { x: outerX, y: outerY },
+          { x: rearTipX, y: rearTipY },
+          { x: (rearTipX + innerRearX) * 0.5, y: (rearTipY + innerRearY) * 0.5 },
+          { x: innerRearX, y: innerRearY },
+        ];
+        this.strokeCalligraphicPolyline(ctx, gPts, lineW * 1.35, outlineRgb, isLight ? 0.95 : 0.78, fish.seed + side * 5.2, false);
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(fx, fy);
+        ctx.quadraticCurveTo(outerX, outerY, rearTipX, rearTipY);
+        ctx.quadraticCurveTo(
+          gRear.x + gRear.nx * (side * hwR * 0.84) - gRear.tx * (fish.maxHalfWidth * 0.02),
+          gRear.y + gRear.ny * (side * hwR * 0.84) - gRear.ty * (fish.maxHalfWidth * 0.02),
+          innerRearX,
+          innerRearY
+        );
+        ctx.strokeStyle = strokeCol;
+        ctx.lineWidth = lineW * 1.05;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // === 2. LEGIBLE ALMOND-DOMED LATERAL EYES ALIGNED TANGENT TO THE TAPERING CHEEK (ZERO FRONT GAP!) ===
+    const aheadF = this.sampleSpineFrame(fish, 0.092);
+    const behindF = this.sampleSpineFrame(fish, 0.158);
+    const aheadHw = koiBodyHalfWidth(0.092, fish.maxHalfWidth);
+    const behindHw = koiBodyHalfWidth(0.158, fish.maxHalfWidth);
+    const eyeRx = fish.maxHalfWidth * 0.158;
+    const eyeRy = fish.maxHalfWidth * 0.082;
+
+    for (const side of [-1, 1] as const) {
+      // Exact cheek contour points ahead (toward whiskers) and behind the eye
+      const ax = aheadF.x + aheadF.nx * (side * aheadHw * 0.97);
+      const ay = aheadF.y + aheadF.ny * (side * aheadHw * 0.97);
+      const bx = behindF.x + behindF.nx * (side * behindHw * 0.97);
+      const by = behindF.y + behindF.ny * (side * behindHw * 0.97);
+      // Center on cheek chord midpoint, nudged slightly inward so BOTH front & rear corners touch the koi flush!
+      const cDx = ax - bx;
+      const cDy = ay - by;
+      const cLen = Math.hypot(cDx, cDy) || 1;
+      const cheekAngle = Math.atan2(cDy, cDx);
+      // Outward normal of the cheek chord (points outward on `side`)
+      const outNx = (-cDy / cLen) * side;
+      const outNy = (cDx / cLen) * side;
+      const ex = (ax + bx) * 0.5 - outNx * (eyeRy * 0.22);
+      const ey = (ay + by) * 0.5 - outNy * (eyeRy * 0.22);
+
+      ctx.save();
+      ctx.translate(ex, ey);
+      ctx.rotate(cheekAngle);
+
+      // Soft warm orbital socket shadow hugging the cheek
+      ctx.beginPath();
+      ctx.ellipse(0, 0, eyeRx * 1.10, eyeRy * 1.12, 0, side > 0 ? 0 : Math.PI, side > 0 ? Math.PI : Math.PI * 2, false);
+      ctx.fillStyle = isLight ? "rgba(118, 92, 66, 0.48)" : "rgba(6, 12, 20, 0.55)";
+      ctx.fill();
+
+      // Glossy obsidian almond eye bulge seated flush along the cheek contour
+      ctx.beginPath();
+      ctx.ellipse(0, 0, eyeRx * 0.94, eyeRy * 0.90, 0, side > 0 ? 0 : Math.PI, side > 0 ? Math.PI : Math.PI * 2, false);
+      ctx.fillStyle = isLight ? "rgba(16, 14, 12, 0.96)" : "rgba(4, 10, 16, 0.96)";
+      ctx.fill();
+      ctx.strokeStyle = strokeCol;
+      ctx.lineWidth = lineW * 0.72;
       ctx.stroke();
+
+      if (isLight) {
+        ctx.beginPath();
+        ctx.arc(eyeRx * 0.24, side * eyeRy * 0.36, Math.max(1.0, eyeRy * 0.19), 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255, 248, 236, 0.72)";
+        ctx.fill();
+      }
+      ctx.restore();
     }
 
-    // 2. Anatomical Dorso-Lateral Eyes at s = 0.095 (well back from the snout tip)
-    const eyePt = { x: 0, y: 0, tx: 0, ty: 0, nx: 0, ny: 0 };
-    const eyeR = Math.max(1.8, fish.maxHalfWidth * 0.092);
-    for (const side of [-1, 1]) {
-      this.spineToWorld(fish, 0.095, side * 0.82, eyePt);
-      const headAngle = Math.atan2(eyePt.ty, eyePt.tx);
-      const ex = eyePt.x;
-      const ey = eyePt.y;
+    // === 3. SNOUT-MARGIN TEARDROP NOSTRIL PITS (NARES: s = 0.060, u = ±0.74) ===
+    const nFrame = this.sampleSpineFrame(fish, 0.060);
+    const nHw = koiBodyHalfWidth(0.060, fish.maxHalfWidth);
+    const nRad = Math.max(1.1, fish.maxHalfWidth * (isSumie ? 0.032 : 0.023));
 
-      // Subtle orbital socket shading
-      ctx.fillStyle = isLight
-        ? "rgba(72, 50, 30, 0.28)"
-        : "rgba(0, 0, 0, 0.45)";
-      ctx.beginPath();
-      ctx.ellipse(ex, ey, eyeR * 1.48, eyeR * 1.05, headAngle, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Golden-amber / ivory iris ring
-      ctx.fillStyle =
-        style === "sumie"
-          ? rgbToRgba(darkenRgb([228, 218, 198], Math.max(0.55, koiExposure)), 0.88)
-          : rgbToRgba(darkenRgb([226, 178, 84], Math.max(0.55, koiExposure)), 0.90);
-      ctx.beginPath();
-      ctx.ellipse(ex, ey, eyeR * 1.18, eyeR * 0.84, headAngle, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Deep lacquer-dark pupil
-      ctx.fillStyle = "rgba(20, 15, 11, 0.95)";
-      ctx.beginPath();
-      ctx.ellipse(
-        ex + eyePt.nx * side * (eyeR * 0.08),
-        ey + eyePt.ny * side * (eyeR * 0.08),
-        eyeR * 0.86,
-        eyeR * 0.62,
-        headAngle,
-        0,
-        Math.PI * 2
-      );
-      ctx.fill();
-
-      // Crisp corneal specular catchlight
-      ctx.fillStyle = "rgba(255, 250, 238, 0.86)";
-      ctx.beginPath();
-      ctx.arc(
-        ex + eyePt.tx * (eyeR * 0.28) + eyePt.nx * side * (eyeR * 0.14),
-        ey + eyePt.ty * (eyeR * 0.28) + eyePt.ny * side * (eyeR * 0.14),
-        eyeR * 0.30,
-        0,
-        Math.PI * 2
-      );
-      ctx.fill();
+    for (const side of [-1, 1] as const) {
+      const nx = nFrame.x + nFrame.nx * (side * nHw * 0.74);
+      const ny = nFrame.y + nFrame.ny * (side * nHw * 0.74);
+      ctx.save();
+      if (!isSumie) {
+        ctx.beginPath();
+        ctx.ellipse(nx, ny, nRad * 1.65, nRad * 1.15, side * 0.45, 0, Math.PI * 2);
+        ctx.fillStyle = isLight ? "rgba(142, 114, 88, 0.52)" : "rgba(10, 20, 32, 0.42)";
+        ctx.fill();
+        ctx.beginPath();
+        ctx.ellipse(nx, ny, nRad * 0.82, nRad * 0.62, side * 0.45, 0, Math.PI * 2);
+        ctx.fillStyle = strokeCol;
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.ellipse(nx, ny, nRad * 1.15, nRad * 0.85, side * 0.40, 0, Math.PI * 2);
+        ctx.fillStyle = strokeCol;
+        ctx.fill();
+      }
+      ctx.restore();
     }
-
-    // 3. Sensory Barbels (*Kuchihige*) rooted strictly inside the upper-lip corners (s = 0.018, u = ±0.56)
-    const lipPt = { x: 0, y: 0, tx: 0, ty: 0, nx: 0, ny: 0 };
-    const whiskerLen = fish.maxHalfWidth * 0.44;
-    const whiskerSway = Math.sin(fish.phase * 0.85) * (whiskerLen * 0.12);
-    ctx.lineWidth = false ? 1.15 : 0.95;
-    ctx.strokeStyle =
-      false
-        ? "#18120e"
-        : style === "sumie"
-          ? isLight
-            ? "rgba(28, 22, 18, 0.65)"
-            : "rgba(218, 208, 192, 0.58)"
-          : isLight
-            ? "rgba(154, 58, 38, 0.62)"
-            : "rgba(232, 134, 98, 0.58)";
-
-    for (const side of [-1, 1]) {
-      this.spineToWorld(fish, 0.018, side * 0.56, lipPt);
-      const rootX = lipPt.x;
-      const rootY = lipPt.y;
-      const ctrlX =
-        rootX +
-        lipPt.tx * (whiskerLen * 0.22) +
-        lipPt.nx * side * (whiskerLen * 0.58);
-      const ctrlY =
-        rootY +
-        lipPt.ty * (whiskerLen * 0.22) +
-        lipPt.ny * side * (whiskerLen * 0.58);
-      const tipX =
-        rootX -
-        lipPt.tx * (whiskerLen * 0.36) +
-        lipPt.nx * (side * whiskerLen * 0.88 + whiskerSway);
-      const tipY =
-        rootY -
-        lipPt.ty * (whiskerLen * 0.36) +
-        lipPt.ny * (side * whiskerLen * 0.88 + whiskerSway);
-
-      ctx.beginPath();
-      ctx.moveTo(rootX, rootY);
-      ctx.quadraticCurveTo(ctrlX, ctrlY, tipX, tipY);
-      ctx.stroke();
-    }
-
-    // Removed floating snout-tip bent line per user request
-
-    ctx.restore();
-  }
-
-  /**
-   * Renders the Ornate Crimson-Red Chinese Lattice Border (`image_7b91a9.png` / `RED_KOI_BORDER_URI`)
-   * around the concentrated left-side Koi pond rectangle using 9-slice corner preservation.
-   */
-  private getSumieBorderSource(img: HTMLImageElement): HTMLCanvasElement | HTMLImageElement {
-    if (this.sumieBorderCanvas) return this.sumieBorderCanvas;
-    const sw = img.naturalWidth;
-    const sh = img.naturalHeight;
-    if (sw < 1 || sh < 1) return img;
-    const c = document.createElement("canvas");
-    c.width = sw;
-    c.height = sh;
-    const bCtx = c.getContext("2d");
-    if (!bCtx) return img;
-    bCtx.filter = "grayscale(1) contrast(1.28) brightness(0.88)";
-    bCtx.drawImage(img, 0, 0);
-    bCtx.filter = "none";
-    this.sumieBorderCanvas = c;
-    return c;
   }
 
   /**
@@ -5280,6 +5817,47 @@ export class AsciiKoiPondRenderer {
     ctx.drawImage(tCanvas, ix, iy);
   }
 
+  /**
+   * Produces a cached monochrome Sumi-e ink-wash version of the ornate border frame image,
+   * preserving alpha transparency for the Sumi-e profile menu portrait frame.
+   */
+  private getSumieBorderSource(rawImg: HTMLImageElement): HTMLCanvasElement {
+    const sw = rawImg.naturalWidth;
+    const sh = rawImg.naturalHeight;
+    if (
+      this.sumieBorderCanvas &&
+      this.sumieBorderCanvas.width === sw &&
+      this.sumieBorderCanvas.height === sh
+    ) {
+      return this.sumieBorderCanvas;
+    }
+    const c = document.createElement("canvas");
+    c.width = sw;
+    c.height = sh;
+    const bCtx = c.getContext("2d");
+    if (bCtx) {
+      bCtx.drawImage(rawImg, 0, 0, sw, sh);
+      try {
+        const imgData = bCtx.getImageData(0, 0, sw, sh);
+        const d = imgData.data;
+        for (let i = 0; i < d.length; i += 4) {
+          if (d[i + 3] === 0) continue;
+          // Perceptual luminance mapped to high-contrast charcoal/sumi ink tone
+          const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+          const ink = Math.max(12, Math.min(242, Math.round((lum - 110) * 1.25 + 96)));
+          d[i] = ink;
+          d[i + 1] = Math.max(10, ink - 2);
+          d[i + 2] = Math.max(8, ink - 5);
+        }
+        bCtx.putImageData(imgData, 0, 0);
+      } catch {
+        // Fallback if canvas is tainted
+      }
+    }
+    this.sumieBorderCanvas = c;
+    return c;
+  }
+
   private drawRawFrameContent(
     targetCtx: CanvasRenderingContext2D,
     x: number,
@@ -5752,6 +6330,14 @@ export class AsciiKoiPondRenderer {
       pCtx.beginPath();
       pCtx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
       pCtx.fill();
+      if (style === "sumie") {
+        pCtx.shadowBlur = 0;
+        pCtx.shadowOffsetX = 0;
+        pCtx.shadowOffsetY = 0;
+        pCtx.lineWidth = 1.05;
+        pCtx.strokeStyle = "rgba(10, 9, 8, 0.88)";
+        pCtx.stroke();
+      }
       pCtx.restore();
     }
 
@@ -5903,6 +6489,14 @@ export class AsciiKoiPondRenderer {
         stoneGrad.addColorStop(1.0, rgbToRgba(aoEdgeRgb, isLight ? 0.94 : 0.96));
         pCtx.fillStyle = stoneGrad;
         pCtx.fill();
+        if (style === "sumie") {
+          pCtx.shadowBlur = 0;
+          pCtx.shadowOffsetX = 0;
+          pCtx.shadowOffsetY = 0;
+          pCtx.lineWidth = 1.45;
+          pCtx.strokeStyle = "rgba(10, 9, 8, 0.90)";
+          pCtx.stroke();
+        }
         pCtx.restore();
 
         // C. Tactile Mineral Roughness (granite speckles & occasional quartz veins)
@@ -5974,6 +6568,14 @@ export class AsciiKoiPondRenderer {
       cGrad.addColorStop(1.0, rgbToRgba(darkenRgb(rawRgb, dFactor * 0.65), isLight ? 0.96 : 0.98));
       pCtx.fillStyle = cGrad;
       pCtx.fill();
+      if (style === "sumie") {
+        pCtx.shadowBlur = 0;
+        pCtx.shadowOffsetX = 0;
+        pCtx.shadowOffsetY = 0;
+        pCtx.lineWidth = 1.9;
+        pCtx.strokeStyle = "rgba(10, 9, 8, 0.92)";
+        pCtx.stroke();
+      }
       pCtx.restore();
 
       // Quartz mineral vein & wet top-left highlight inside the cobble
@@ -6028,14 +6630,21 @@ export class AsciiKoiPondRenderer {
    */
   private ensureCausticTileCanvas(style: KoiArtStyle, isLight: boolean): HTMLCanvasElement {
     const key = `${style}:${isLight ? "light" : "dark"}:worley-v3`;
-    if (this.causticTileCanvas && this.causticTileKey === key) {
-      return this.causticTileCanvas;
+    const cached = this.causticTileCache.get(key);
+    if (cached) {
+      this.causticTileCanvas = cached;
+      this.causticTileKey = key;
+      return cached;
+    }
+    if (this.causticTileCache.size >= 6) {
+      this.causticTileCache.clear();
     }
 
     const size = 256;
-    const canvas = this.causticTileCanvas ?? document.createElement("canvas");
+    const canvas = document.createElement("canvas");
     canvas.width = size;
     canvas.height = size;
+    this.causticTileCache.set(key, canvas);
     this.causticTileCanvas = canvas;
     this.causticTileKey = key;
 
@@ -6190,6 +6799,14 @@ export class AsciiKoiPondRenderer {
       }
       ctx.fillStyle = grad;
       ctx.fill();
+      if (style === "sumie") {
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+        ctx.lineWidth = Math.max(1.8, 2.2 * unit);
+        ctx.strokeStyle = "rgba(10, 9, 8, 0.94)";
+        ctx.stroke();
+      }
       ctx.restore();
 
       // 3. Tactile stone roughness stippling & crevices
@@ -6391,6 +7008,11 @@ export class AsciiKoiPondRenderer {
       }
       ctx.fillStyle = sg;
       ctx.fill();
+      if (style === "sumie") {
+        ctx.lineWidth = Math.max(1.5, 1.8 * unit);
+        ctx.strokeStyle = "rgba(10, 9, 8, 0.92)";
+        ctx.stroke();
+      }
       ctx.restore();
     }
 
@@ -6523,157 +7145,54 @@ export class AsciiKoiPondRenderer {
     targetCtx.closePath();
     targetCtx.fill();
 
-    // 2. Exact 3-Curve Rounded Fan Pectoral & Ventral Fins (matching paintKoiPairedFins Bezier geometry)
-    const pecNode = spine[4];
-    const venNode = spine[10];
-    const turnBias = koiClamp(fish.curvature * 1.65, -0.32, 0.32);
+    // 2. Synced Pectoral & Pelvic Fins (matching redesigned paintKoiPairedFins exactly)
+    const isSumie = this.artStyle === "sumie";
+    const pLead = this.sampleSpineFrame(fish, 0.276);
+    const pTrail = this.sampleSpineFrame(fish, 0.382);
+    const hwLead = koiBodyHalfWidth(0.276, fish.maxHalfWidth);
+    const hwTrail = koiBodyHalfWidth(0.382, fish.maxHalfWidth);
+    const pecSpan = fish.maxHalfWidth * fish.finSpanFactor * (isSumie ? 1.50 : 1.24);
+    const sweepOsc = Math.sin(fish.phase * 0.85) * 0.04;
 
-    const fillRoundedFanSubpath = (
-      nodeX: number,
-      nodeY: number,
-      tx: number,
-      ty: number,
-      nx: number,
-      ny: number,
-      flankHw: number,
-      side: number,
-      span: number,
-      chord: number,
-      sweepBack: number
-    ) => {
-      const leadRootX = nodeX + tx * (chord * 0.22) + nx * side * (flankHw * 0.72);
-      const leadRootY = nodeY + ty * (chord * 0.22) + ny * side * (flankHw * 0.72);
-      const trailRootX = nodeX - tx * (chord * 0.78) + nx * side * (flankHw * 0.68);
-      const trailRootY = nodeY - ty * (chord * 0.78) + ny * side * (flankHw * 0.68);
-
-      const tipX = leadRootX + nx * side * span - tx * (sweepBack * 0.35);
-      const tipY = leadRootY + ny * side * span - ty * (sweepBack * 0.35);
-      const rearTipX =
-        leadRootX + nx * side * (span * 0.82) - tx * (chord * 0.92 + sweepBack * 0.68);
-      const rearTipY =
-        leadRootY + ny * side * (span * 0.82) - ty * (chord * 0.92 + sweepBack * 0.68);
-
-      const leadCtrlX = leadRootX + nx * side * (span * 0.74) + tx * (chord * 0.42);
-      const leadCtrlY = leadRootY + ny * side * (span * 0.74) + ty * (chord * 0.42);
-      const fanCtrl1X = leadRootX + nx * side * (span * 1.10) - tx * (chord * 0.44 + sweepBack * 0.45);
-      const fanCtrl1Y = leadRootY + ny * side * (span * 1.10) - ty * (chord * 0.44 + sweepBack * 0.45);
-      const fanCtrl2X = leadRootX + nx * side * (span * 1.02) - tx * (chord * 0.80 + sweepBack * 0.62);
-      const fanCtrl2Y = leadRootY + ny * side * (span * 1.02) - ty * (chord * 0.80 + sweepBack * 0.62);
-      const trailCtrlX = trailRootX + nx * side * (span * 0.42) - tx * (chord * 0.28);
-      const trailCtrlY = trailRootY + ny * side * (span * 0.42) - ty * (chord * 0.28);
+    for (const side of [-1, 1] as const) {
+      const rootLx = pLead.x + pLead.nx * (side * hwLead * 0.90) + ox;
+      const rootLy = pLead.y + pLead.ny * (side * hwLead * 0.90) + oy;
+      const rootTx = pTrail.x + pTrail.nx * (side * hwTrail * 0.88) + ox;
+      const rootTy = pTrail.y + pTrail.ny * (side * hwTrail * 0.88) + oy;
+      const backSweep = (isSumie ? 0.62 : 0.30) + sweepOsc * side;
+      const outX = pLead.nx * side - pLead.tx * backSweep;
+      const outY = pLead.ny * side - pLead.ty * backSweep;
+      const outLen = Math.hypot(outX, outY) || 1;
+      const ux = outX / outLen;
+      const uy = outY / outLen;
+      const fx = pLead.tx;
+      const fy = pLead.ty;
+      const tipX = rootLx + ux * pecSpan - fx * (pecSpan * (isSumie ? 0.22 : 0.05));
+      const tipY = rootLy + uy * pecSpan - fy * (pecSpan * (isSumie ? 0.22 : 0.05));
 
       targetCtx.beginPath();
-      targetCtx.moveTo(leadRootX, leadRootY);
-      targetCtx.quadraticCurveTo(leadCtrlX, leadCtrlY, tipX, tipY);
-      targetCtx.bezierCurveTo(fanCtrl1X, fanCtrl1Y, fanCtrl2X, fanCtrl2Y, rearTipX, rearTipY);
-      targetCtx.quadraticCurveTo(trailCtrlX, trailCtrlY, trailRootX, trailRootY);
+      targetCtx.moveTo(rootLx, rootLy);
+      targetCtx.bezierCurveTo(
+        rootLx + ux * (pecSpan * 0.48) + fx * (pecSpan * 0.26),
+        rootLy + uy * (pecSpan * 0.48) + fy * (pecSpan * 0.26),
+        rootLx + ux * (pecSpan * 0.96) + fx * (pecSpan * 0.12),
+        rootLy + uy * (pecSpan * 0.96) + fy * (pecSpan * 0.12),
+        tipX,
+        tipY
+      );
+      targetCtx.quadraticCurveTo(
+        rootTx + ux * (pecSpan * 0.62) - fx * (pecSpan * 0.26),
+        rootTy + uy * (pecSpan * 0.62) - fy * (pecSpan * 0.26),
+        rootTx,
+        rootTy
+      );
       targetCtx.closePath();
       targetCtx.fill();
-    };
-
-    const pecHw = koiBodyHalfWidth(pecNode.s, fish.maxHalfWidth);
-    const pecChord = fish.bodyLength * 0.138;
-    for (const side of [-1, 1]) {
-      const sideFlutter = Math.sin(fish.finPhase + (side < 0 ? 0 : 0.85)) * 0.11;
-      const turnExtension = 1.0 + side * turnBias * 0.28;
-      const pecSpan =
-        fish.maxHalfWidth * (1.14 + sideFlutter) * fish.finSpanFactor * turnExtension;
-      const pecSweep = fish.bodyLength * (0.064 - sideFlutter * 0.20 + side * turnBias * 0.022);
-      fillRoundedFanSubpath(
-        pecNode.x + ox,
-        pecNode.y + oy,
-        pecNode.tx,
-        pecNode.ty,
-        pecNode.nx,
-        pecNode.ny,
-        pecHw,
-        side,
-        pecSpan,
-        pecChord,
-        pecSweep
-      );
     }
 
-    const venHw = koiBodyHalfWidth(venNode.s, fish.maxHalfWidth);
-    const venChord = fish.bodyLength * 0.092;
-    for (const side of [-1, 1]) {
-      const sideFlutter = Math.sin(fish.finPhase - 1.1 + (side < 0 ? 0 : 0.65)) * 0.075;
-      const venSpan = fish.maxHalfWidth * (0.66 + sideFlutter) * fish.finSpanFactor;
-      const venSweep = fish.bodyLength * (0.072 - sideFlutter * 0.18);
-      fillRoundedFanSubpath(
-        venNode.x + ox,
-        venNode.y + oy,
-        venNode.tx,
-        venNode.ty,
-        venNode.nx,
-        venNode.ny,
-        venHw,
-        side,
-        venSpan,
-        venChord,
-        venSweep
-      );
-    }
-
-    // 3. Exact Bilobed Veil Caudal (Tail) Fin (matching paintKoiCaudalFin Bezier geometry)
-    const rootNode = spine[n - 2];
-    const rootHw = koiBodyHalfWidth(rootNode.s, fish.maxHalfWidth) * 0.94;
-    const tailLen = fish.bodyLength * 0.30 * fish.tailLengthFactor;
-    const spread = fish.maxHalfWidth * 1.18 * fish.finSpanFactor;
-    const ctrl1Offset = tailHw * 1.15 + spread * 0.32;
-
-    const bx = -tail.tx;
-    const by = -tail.ty;
-    const tnx = tail.nx;
-    const tny = tail.ny;
-
-    const leftRootX = rootNode.x - rootNode.nx * rootHw + ox;
-    const leftRootY = rootNode.y - rootNode.ny * rootHw + oy;
-    const rightRootX = rootNode.x + rootNode.nx * rootHw + ox;
-    const rightRootY = rootNode.y + rootNode.ny * rootHw + oy;
-
-    const leftLobeX = tail.x + bx * (tailLen * 0.92) + tnx * (sway - spread * 0.88) + ox;
-    const leftLobeY = tail.y + by * (tailLen * 0.92) + tny * (sway - spread * 0.88) + oy;
-    const rightLobeX = tail.x + bx * (tailLen * 0.92) + tnx * (sway + spread * 0.88) + ox;
-    const rightLobeY = tail.y + by * (tailLen * 0.92) + tny * (sway + spread * 0.88) + oy;
-    const notchX = tail.x + bx * (tailLen * 0.64) + tnx * (sway * 0.72 + sway2 * 0.28) + ox;
-    const notchY = tail.y + by * (tailLen * 0.64) + tny * (sway * 0.72 + sway2 * 0.28) + oy;
-
-    targetCtx.beginPath();
-    targetCtx.moveTo(leftRootX, leftRootY);
-    targetCtx.bezierCurveTo(
-      tail.x + bx * (tailLen * 0.18) + tnx * (sway * 0.24 - ctrl1Offset) + ox,
-      tail.y + by * (tailLen * 0.18) + tny * (sway * 0.24 - ctrl1Offset) + oy,
-      tail.x + bx * (tailLen * 0.84) + tnx * (sway - spread * 1.05) + ox,
-      tail.y + by * (tailLen * 0.84) + tny * (sway - spread * 1.05) + oy,
-      leftLobeX,
-      leftLobeY
-    );
-    targetCtx.bezierCurveTo(
-      tail.x + bx * (tailLen * 1.02) + tnx * (sway - spread * 0.42) + ox,
-      tail.y + by * (tailLen * 1.02) + tny * (sway - spread * 0.42) + oy,
-      notchX - tnx * (spread * 0.18),
-      notchY - tny * (spread * 0.18),
-      notchX,
-      notchY
-    );
-    targetCtx.bezierCurveTo(
-      notchX + tnx * (spread * 0.18),
-      notchY + tny * (spread * 0.18),
-      tail.x + bx * (tailLen * 1.02) + tnx * (sway + spread * 0.42) + ox,
-      tail.y + by * (tailLen * 1.02) + tny * (sway + spread * 0.42) + oy,
-      rightLobeX,
-      rightLobeY
-    );
-    targetCtx.bezierCurveTo(
-      tail.x + bx * (tailLen * 0.84) + tnx * (sway + spread * 1.05) + ox,
-      tail.y + by * (tailLen * 0.84) + tny * (sway + spread * 1.05) + oy,
-      tail.x + bx * (tailLen * 0.18) + tnx * (sway * 0.24 + ctrl1Offset) + ox,
-      tail.y + by * (tailLen * 0.18) + tny * (sway * 0.24 + ctrl1Offset) + oy,
-      rightRootX,
-      rightRootY
-    );
-    targetCtx.closePath();
+    // 3. Synced Unified Caudal Fin (matching paintKoiCaudalFin 1:1 — zero ghost tail!)
+    const caudalFin = computeCaudalFin(fish);
+    traceCaudalFinPath(targetCtx, caudalFin, ox, oy);
     targetCtx.fill();
   }
 
@@ -6697,9 +7216,16 @@ export class AsciiKoiPondRenderer {
     this.lastFlashUpdateAt = now;
     this.lastBotanicalUpdateAt = now;
 
-    // 1. Flashlight dispersal & smooth natural cursor follow
-    const targetDispersal = this.isLightMode || !this.flashlightEnabled ? 1.0 : 0.0;
-    const speed = targetDispersal > this.flashlightDispersal ? 1.55 : 1.35;
+    // 1. Flashlight dispersal & smooth natural cursor follow (synced with virtual sun altitude during sunset/sunrise)
+    const curDaylight = this.getDaylightFactor();
+    const targetDispersal = !this.flashlightEnabled
+      ? 1.0
+      : this.transitioning
+        ? koiClamp(curDaylight * 1.08, 0, 1)
+        : this.isLightMode
+          ? 1.0
+          : 0.0;
+    const speed = this.transitioning ? 4.5 : targetDispersal > this.flashlightDispersal ? 1.55 : 1.35;
     if (this.flashlightDispersal < targetDispersal) {
       this.flashlightDispersal = Math.min(targetDispersal, this.flashlightDispersal + dt * speed);
     } else if (this.flashlightDispersal > targetDispersal) {
@@ -6870,13 +7396,264 @@ export class AsciiKoiPondRenderer {
       st.rotVel += (-7.5 * st.rotOffset - 3.0 * st.rotVel) * dt;
       st.rotOffset = koiClamp(st.rotOffset + st.rotVel * dt, -0.26, 0.26);
 
-      // Advance independent leaf phase (speeds up momentarily when excited, never synchronous across pads)
-      const instFreq = st.baseFreq + st.excite * 2.85;
+      // Advance independent leaf phase calmly (gentle swell when koi pass, never high-frequency wobble)
+      const instFreq = st.baseFreq + st.excite * 0.24;
       st.leafPhase += dt * instFreq;
 
       // Secondary phase lag for the companion blooming pink lotus flower
       const targetFlowerPhase = st.leafPhase - 0.68;
       st.flowerPhase += (targetFlowerPhase - st.flowerPhase) * Math.min(1, dt * 4.2);
+    }
+
+    // 3B. Priority Koi-Path Parting & Zero-Overlap Solver for All 27 Lotus & Companion Leaves + Stems:
+    //     When any koi swims directly under a parent or companion leaf (or across its underwater stem),
+    //     the leaf in the fish's direct path gets highest priority, parts fully clear of the koi's body
+    //     along with its stem, never overlaps neighboring leaves/maples, and returns smoothly once clear.
+    const companionLeaves = this.getResolvedCompanionLeaves(worldW, worldH, unit, resolvedPads);
+    interface PartNode {
+      isParent: boolean;
+      idx: number;
+      restX: number;
+      restY: number;
+      baseX: number;
+      baseY: number;
+      r: number;
+      dispX: number;
+      dispY: number;
+      dispVx: number;
+      dispVy: number;
+      bowX: number;
+      bowY: number;
+      priority: number;
+      rootX: number;
+      rootY: number;
+    }
+    const partNodes: PartNode[] = [];
+    for (let i = 0; i < resolvedPads.length; i++) {
+      const pad = resolvedPads[i];
+      const st = this.lotusPadStates[i];
+      const ampBoost = 1.0 + st.excite * 0.22;
+      const baseSwayX = Math.sin(st.leafPhase) * 3.0 * unit * ampBoost + st.swayX;
+      const baseSwayY = Math.cos(st.leafPhase * 0.84 + i) * 2.4 * unit * ampBoost + st.swayY;
+      const restTipX = pad.x - Math.cos(pad.notch) * (pad.r * 0.06);
+      const restTipY = pad.y - Math.sin(pad.notch) * (pad.r * 0.06);
+      const exit = this.computeNearestEdgeExit(restTipX, restTipY, worldW, worldH, unit, i);
+      partNodes.push({
+        isParent: true,
+        idx: i,
+        restX: pad.x,
+        restY: pad.y,
+        baseX: pad.x + baseSwayX,
+        baseY: pad.y + baseSwayY,
+        r: pad.r,
+        dispX: st.dispX,
+        dispY: st.dispY,
+        dispVx: st.dispVx,
+        dispVy: st.dispVy,
+        bowX: st.bowX,
+        bowY: st.bowY,
+        priority: 0,
+        rootX: exit.x,
+        rootY: exit.y,
+      });
+    }
+    for (let cIdx = 0; cIdx < companionLeaves.length; cIdx++) {
+      const comp = companionLeaves[cIdx];
+      const st = this.lotusPadStates[comp.parentIdx];
+      const cst = this.companionLeafStates[cIdx];
+      const cPhase = st.leafPhase * 1.08 + cIdx * 0.85;
+      const ampBoost = 1.0 + st.excite * 0.22;
+      const baseSwayX = Math.sin(cPhase) * 2.5 * unit * ampBoost + st.swayX * 0.90;
+      const baseSwayY = Math.cos(cPhase * 0.86 + cIdx) * 2.0 * unit * ampBoost + st.swayY * 0.90;
+      const cleftR = comp.r * 0.20;
+      const restTipX = comp.x + Math.cos(comp.notch) * cleftR;
+      const restTipY = comp.y + Math.sin(comp.notch) * cleftR;
+      const exit = this.computeNearestEdgeExit(restTipX, restTipY, worldW, worldH, unit, 9 + cIdx);
+      partNodes.push({
+        isParent: false,
+        idx: cIdx,
+        restX: comp.x,
+        restY: comp.y,
+        baseX: comp.x + baseSwayX,
+        baseY: comp.y + baseSwayY,
+        r: comp.r,
+        dispX: cst.dispX,
+        dispY: cst.dispY,
+        dispVx: cst.dispVx,
+        dispVy: cst.dispVy,
+        bowX: cst.bowX,
+        bowY: cst.bowY,
+        priority: 0,
+        rootX: exit.x,
+        rootY: exit.y,
+      });
+    }
+
+    // Step 1: Compute per-leaf full-clearance parting target & fish-path priority
+    const spineSampleIndices = [0, 2, 4, 6, 8, 10, 12, 14, 16, 19];
+    for (let nIdx = 0; nIdx < partNodes.length; nIdx++) {
+      const nd = partNodes[nIdx];
+      const curX = nd.baseX + nd.dispX;
+      const curY = nd.baseY + nd.dispY;
+      let targetX = 0;
+      let targetY = 0;
+      let targetBowX = 0;
+      let targetBowY = 0;
+      let maxPrio = 0;
+
+      for (let k = 0; k < world.koi.length; k++) {
+        const fish = world.koi[k];
+        const sp = fish.spine;
+        if (!sp || sp.length < 10) continue;
+        const head = sp[0];
+        // Strict contact detection: leaf does NOT displace until the fish body physically contacts it
+        let bestDist = Infinity;
+        let bestX = head.x;
+        let bestY = head.y;
+        let bestNx = head.nx;
+        let bestNy = head.ny;
+        let bestHw = head.halfWidth || fish.maxHalfWidth * 0.75;
+
+        for (let si = 0; si < spineSampleIndices.length; si++) {
+          const sIdx = Math.min(sp.length - 1, spineSampleIndices[si]);
+          const sn = sp[sIdx];
+          const d = Math.hypot(nd.restX - sn.x, nd.restY - sn.y);
+          if (d < bestDist) {
+            bestDist = d;
+            bestX = sn.x;
+            bestY = sn.y;
+            bestNx = sn.nx;
+            bestNy = sn.ny;
+            bestHw = Math.max(sn.halfWidth, fish.maxHalfWidth * 0.55);
+          }
+        }
+
+        // Trigger strictly on physical contact (bestHw + nd.r)
+        const contactR = bestHw + nd.r;
+        if (bestDist < contactR) {
+          const overlap = contactR - bestDist;
+          const relX = (Math.hypot(nd.dispX, nd.dispY) > 4 * unit ? curX : nd.restX) - bestX;
+          const relY = (Math.hypot(nd.dispX, nd.dispY) > 4 * unit ? curY : nd.restY) - bestY;
+          const sideDot = relX * bestNx + relY * bestNy;
+          const side = sideDot >= 0 ? 1 : -1;
+          // Push smoothly perpendicular to the fish spine so the leaf & stem clear the fish cleanly
+          const pushDist = overlap + 6 * unit;
+          targetX += bestNx * side * pushDist;
+          targetY += bestNy * side * pushDist;
+          const prio = 1.0 + overlap / Math.max(1, contactR);
+          if (prio > maxPrio) maxPrio = prio;
+        }
+
+        // Subtle mid-stem bend only on direct contact (kept taut so stems never over-bend)
+        for (const tStem of [0.45, 0.70]) {
+          const sx = koiLerp(nd.rootX, curX, tStem);
+          const sy = koiLerp(nd.rootY, curY, tStem);
+          for (const sIdx of [2, 8, 14]) {
+            const sn = sp[Math.min(sp.length - 1, sIdx)];
+            const sd = Math.hypot(sx - sn.x, sy - sn.y);
+            const stemClear = Math.max(sn.halfWidth, fish.maxHalfWidth * 0.55) + 4 * unit;
+            if (sd < stemClear) {
+              const sOver = stemClear - sd;
+              const sDot = (sx - sn.x) * sn.nx + (sy - sn.y) * sn.ny;
+              const sSide = sDot >= 0 ? 1 : -1;
+              targetBowX += sn.nx * sSide * sOver * 0.35;
+              targetBowY += sn.ny * sSide * sOver * 0.35;
+            }
+          }
+        }
+      }
+
+      nd.priority = maxPrio;
+      const maxDisp = Math.min(worldW, worldH) * 0.26;
+      const tMag = Math.hypot(targetX, targetY);
+      if (tMag > maxDisp) {
+        targetX = (targetX / tMag) * maxDisp;
+        targetY = (targetY / tMag) * maxDisp;
+      }
+
+      if (maxPrio > 0) {
+        // Fast, fluid parting while koi passes beneath
+        const kPush = 18.0;
+        const dampPush = 6.2;
+        nd.dispVx += ((targetX - nd.dispX) * kPush - nd.dispVx * dampPush) * dt;
+        nd.dispVy += ((targetY - nd.dispY) * kPush - nd.dispVy * dampPush) * dt;
+      } else {
+        // Gentle botanical spring-damper return to rest once fish has passed
+        const kRet = 3.8;
+        const dampRet = 3.1;
+        nd.dispVx += (-nd.dispX * kRet - nd.dispVx * dampRet) * dt;
+        nd.dispVy += (-nd.dispY * kRet - nd.dispVy * dampRet) * dt;
+      }
+      nd.dispX += nd.dispVx * dt;
+      nd.dispY += nd.dispVy * dt;
+
+      const bowLerp = Math.min(1, dt * (maxPrio > 0 ? 10.0 : 4.0));
+      nd.bowX += (koiClamp(targetBowX, -22 * unit, 22 * unit) - nd.bowX) * bowLerp;
+      nd.bowY += (koiClamp(targetBowY, -22 * unit, 22 * unit) - nd.bowY) * bowLerp;
+    }
+
+    // Step 2: Multi-pass zero-overlap solver across all 27 parent & companion leaves (priority-weighted)
+    for (let pass = 0; pass < 5; pass++) {
+      for (let i = 0; i < partNodes.length; i++) {
+        const a = partNodes[i];
+        const ax = a.baseX + a.dispX;
+        const ay = a.baseY + a.dispY;
+        for (let j = i + 1; j < partNodes.length; j++) {
+          const b = partNodes[j];
+          const bx = b.baseX + b.dispX;
+          const by = b.baseY + b.dispY;
+          const dx = bx - ax;
+          const dy = by - ay;
+          const dist = Math.hypot(dx, dy) || 0.001;
+          const minSep = a.r + b.r + 3.5 * unit;
+          if (dist < minSep) {
+            const overlap = minSep - dist;
+            const ux = dx / dist;
+            const uy = dy / dist;
+            let wA = 0.5;
+            let wB = 0.5;
+            if (a.priority > b.priority + 0.05) {
+              wA = 0.18;
+              wB = 0.82;
+            } else if (b.priority > a.priority + 0.05) {
+              wA = 0.82;
+              wB = 0.18;
+            }
+            a.dispX -= ux * overlap * wA;
+            a.dispY -= uy * overlap * wA;
+            b.dispX += ux * overlap * wB;
+            b.dispY += uy * overlap * wB;
+          }
+        }
+        // Keep displaced leaves cleanly within pond bounds
+        const margin = a.r + 5 * unit;
+        const clampedX = koiClamp(a.baseX + a.dispX, margin, Math.max(margin + 1, worldW - margin));
+        const clampedY = koiClamp(a.baseY + a.dispY, margin, Math.max(margin + 1, worldH - margin));
+        a.dispX = clampedX - a.baseX;
+        a.dispY = clampedY - a.baseY;
+      }
+    }
+
+    // Write back resolved displacements
+    for (let nIdx = 0; nIdx < partNodes.length; nIdx++) {
+      const nd = partNodes[nIdx];
+      if (nd.isParent) {
+        const st = this.lotusPadStates[nd.idx];
+        st.dispX = nd.dispX;
+        st.dispY = nd.dispY;
+        st.dispVx = nd.dispVx;
+        st.dispVy = nd.dispVy;
+        st.bowX = nd.bowX;
+        st.bowY = nd.bowY;
+      } else {
+        const cst = this.companionLeafStates[nd.idx];
+        cst.dispX = nd.dispX;
+        cst.dispY = nd.dispY;
+        cst.dispVx = nd.dispVx;
+        cst.dispVy = nd.dispVy;
+        cst.bowX = nd.bowX;
+        cst.bowY = nd.bowY;
+      }
     }
 
     // 4. Unbounded Free-Floating 2D Water-Drift Physics for the 6 Floating Maple Leaves
@@ -6960,22 +7737,48 @@ export class AsciiKoiPondRenderer {
       }
     }
 
-    // Enforce strict non-overlap on the persistent Maple Leaf positions against all 9 Lotus Pads & other Maple Leaves
+    const compLeavesForMaple = this.getResolvedCompanionLeaves(worldW, worldH, unit, resolvedPads);
+    // Enforce strict non-overlap on Maple Leaves against all 9 displaced Lotus Pads, 18 Companion Leaves & other Maples
     for (let pass = 0; pass < 4; pass++) {
       for (let i = 0; i < specs.length; i++) {
         const m = this.mapleLeafStates[i];
         const mSize = specs[i].size;
         for (let p = 0; p < resolvedPads.length; p++) {
           const lp = resolvedPads[p];
-          const dx = m.x - lp.x;
-          const dy = m.y - lp.y;
+          const st = this.lotusPadStates[p];
+          const lpx = lp.x + st.swayX + st.dispX;
+          const lpy = lp.y + st.swayY + st.dispY;
+          const dx = m.x - lpx;
+          const dy = m.y - lpy;
           const dist = Math.hypot(dx, dy) || 0.001;
           const minSep = lp.r * 1.06 + mSize * 1.05 + 6 * unit;
           if (dist < minSep) {
             const ux = dx / dist;
             const uy = dy / dist;
-            m.x = lp.x + ux * minSep;
-            m.y = lp.y + uy * minSep;
+            m.x = lpx + ux * minSep;
+            m.y = lpy + uy * minSep;
+            const vn = m.velX * ux + m.velY * uy;
+            if (vn < 0) {
+              m.velX -= ux * vn;
+              m.velY -= uy * vn;
+            }
+          }
+        }
+        for (let c = 0; c < compLeavesForMaple.length; c++) {
+          const cp = compLeavesForMaple[c];
+          const st = this.lotusPadStates[cp.parentIdx];
+          const cst = this.companionLeafStates[c];
+          const cpx = cp.x + st.swayX * 0.90 + (cst ? cst.dispX : 0);
+          const cpy = cp.y + st.swayY * 0.90 + (cst ? cst.dispY : 0);
+          const dx = m.x - cpx;
+          const dy = m.y - cpy;
+          const dist = Math.hypot(dx, dy) || 0.001;
+          const minSep = cp.r * 1.06 + mSize * 1.05 + 4 * unit;
+          if (dist < minSep) {
+            const ux = dx / dist;
+            const uy = dy / dist;
+            m.x = cpx + ux * minSep;
+            m.y = cpy + uy * minSep;
             const vn = m.velX * ux + m.velY * uy;
             if (vn < 0) {
               m.velX -= ux * vn;
@@ -7220,6 +8023,8 @@ export class AsciiKoiPondRenderer {
         uniform float uMouseStrength;
         uniform float uIsSumie;
         uniform float uIsLight;
+        uniform float uSunWarmth;
+        uniform float uDaylight;
 
         vec2 hash22(vec2 p) {
           return fract(sin(vec2(dot(p, vec2(127.1, 311.7)),
@@ -7294,11 +8099,21 @@ export class AsciiKoiPondRenderer {
           c += (hash21(gl_FragCoord.xy + fract(uTime)) - 0.5) / 255.0;
           c = clamp(c, 0.0, 1.0);
 
-          vec3 mokkotsuCol = mix(vec3(1.0, 0.89, 0.58), vec3(1.0, 0.99, 0.90), clamp(hot * 0.75, 0.0, 1.0));
-          vec3 sumieCol = mix(vec3(0.95, 0.91, 0.84), vec3(1.0, 0.98, 0.94), clamp(hot * 0.75, 0.0, 1.0));
+          vec3 middayLow = vec3(1.0, 0.89, 0.58);
+          vec3 middayHigh = vec3(1.0, 0.99, 0.90);
+          vec3 sunsetLow = vec3(1.0, 0.44, 0.16);
+          vec3 sunsetHigh = vec3(1.0, 0.82, 0.46);
+          vec3 mokkotsuCol = mix(
+            mix(middayLow, sunsetLow, uSunWarmth),
+            mix(middayHigh, sunsetHigh, uSunWarmth),
+            clamp(hot * 0.75, 0.0, 1.0)
+          );
+          vec3 sumieLow = mix(vec3(0.95, 0.91, 0.84), vec3(0.90, 0.86, 0.78), uSunWarmth);
+          vec3 sumieHigh = mix(vec3(1.0, 0.98, 0.94), vec3(0.98, 0.95, 0.88), uSunWarmth);
+          vec3 sumieCol = mix(sumieLow, sumieHigh, clamp(hot * 0.75, 0.0, 1.0));
           vec3 finalCol = mix(mokkotsuCol, sumieCol, uIsSumie);
 
-          float alpha = smoothstep(0.045, 0.78, c) * (uIsLight > 0.5 ? 0.82 : 0.88);
+          float alpha = smoothstep(0.045, 0.78, c) * mix(0.88, 0.82, uDaylight);
           gl_FragColor = vec4(finalCol, alpha);
         }
       `;
@@ -7342,6 +8157,8 @@ export class AsciiKoiPondRenderer {
         uMouseStrength: gl.getUniformLocation(prog, "uMouseStrength"),
         uIsSumie: gl.getUniformLocation(prog, "uIsSumie"),
         uIsLight: gl.getUniformLocation(prog, "uIsLight"),
+        uSunWarmth: gl.getUniformLocation(prog, "uSunWarmth"),
+        uDaylight: gl.getUniformLocation(prog, "uDaylight"),
       };
 
       const quad = gl.createBuffer()!;
@@ -7376,8 +8193,11 @@ export class AsciiKoiPondRenderer {
     gl.uniform1f(this.causticGLUniforms.uScale, 7.2);
     gl.uniform2f(this.causticGLUniforms.uMouse, 0.5, 0.5);
     gl.uniform1f(this.causticGLUniforms.uMouseStrength, 0.0);
+    const solar = this.getSolarLightingState();
     gl.uniform1f(this.causticGLUniforms.uIsSumie, style === "sumie" ? 1.0 : 0.0);
     gl.uniform1f(this.causticGLUniforms.uIsLight, isLight ? 1.0 : 0.0);
+    gl.uniform1f(this.causticGLUniforms.uSunWarmth, solar.lowSunWarmth);
+    gl.uniform1f(this.causticGLUniforms.uDaylight, solar.daylight);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     return canvas;
@@ -7693,9 +8513,18 @@ export class AsciiKoiPondRenderer {
     style: KoiArtStyle
   ): void {
     const quantUnit = Math.round(unit * 40) / 40;
-    const key = `${quantUnit}:${isLight ? "L" : "D"}:${style}:sakura-water-v13`;
-    if (this.sakuraSpriteCacheKey === key && this.floatingFlowerSprites.length === 4) {
+    const key = `${quantUnit}:${isLight ? "L" : "D"}:${style}:sakura-water-v14`;
+    const cachedSakura = this.sakuraSpriteCacheMap.get(key);
+    if (cachedSakura && cachedSakura.floatingFlower.length === 4) {
+      this.sakuraSpriteCacheKey = key;
+      this.floatingFlowerSprites = cachedSakura.floatingFlower;
+      this.sunkenFlowerSprites = cachedSakura.sunkenFlower;
+      this.floatingPetalSprites = cachedSakura.floatingPetal;
+      this.sunkenPetalSprites = cachedSakura.sunkenPetal;
       return;
+    }
+    if (this.sakuraSpriteCacheMap.size >= 6) {
+      this.sakuraSpriteCacheMap.clear();
     }
     this.sakuraSpriteCacheKey = key;
     this.floatingFlowerSprites = [];
@@ -7825,8 +8654,8 @@ export class AsciiKoiPondRenderer {
         tCtx.fillStyle = pGrad;
         tCtx.fill();
 
-        tCtx.strokeStyle = rgbToRgba(darkenRgb(midRgb, 0.72), 0.42);
-        tCtx.lineWidth = Math.max(0.45, refR * 0.036);
+        tCtx.strokeStyle = isMono ? "rgba(10, 9, 8, 0.92)" : rgbToRgba(darkenRgb(midRgb, 0.72), 0.42);
+        tCtx.lineWidth = isMono ? Math.max(1.0, 1.15 * quantUnit) : Math.max(0.45, refR * 0.036);
         tCtx.stroke();
 
         tCtx.beginPath();
@@ -8007,18 +8836,17 @@ export class AsciiKoiPondRenderer {
       tCtx.shadowBlur = 0;
       tCtx.shadowOffsetX = 0;
       tCtx.shadowOffsetY = 0;
-      tCtx.strokeStyle = rgbToRgba(darkenRgb(midRgb, 0.74), 0.36);
-      tCtx.lineWidth = Math.max(0.4, pLen * 0.035);
+      tCtx.strokeStyle = isMono ? "rgba(10, 9, 8, 0.92)" : rgbToRgba(darkenRgb(midRgb, 0.74), 0.36);
+      tCtx.lineWidth = isMono ? Math.max(0.95, 1.1 * quantUnit) : Math.max(0.4, pLen * 0.035);
       tCtx.stroke();
 
       tCtx.restore();
       return c;
     };
 
-    // In Sumi-e (Ink) mode, ~75% of flowers (3 of 4 variants) and ~67% of petals (2 of 3 variants)
-    // are monochrome black-and-white / grey Sumi ink wash, while the remaining keep their original pink!
+    // In Sumi-e (Ink) mode, ALL sakura flowers and petals are 100% black-and-white Sumi-e ink wash!
     for (let v = 0; v < 4; v++) {
-      const isMono = style === "sumie" && v < 3;
+      const isMono = style === "sumie";
       this.floatingFlowerSprites.push(
         bakeFlowerSprite(isMono ? monoFloatingTones[v] : floatingVariants[v], false, isMono)
       );
@@ -8027,7 +8855,7 @@ export class AsciiKoiPondRenderer {
       );
     }
     for (let v = 0; v < 3; v++) {
-      const isMono = style === "sumie" && v < 2;
+      const isMono = style === "sumie";
       this.floatingPetalSprites.push(
         bakePetalSprite(isMono ? monoFloatingTones[v] : floatingVariants[v], false, isMono)
       );
@@ -8035,6 +8863,12 @@ export class AsciiKoiPondRenderer {
         bakePetalSprite(isMono ? monoSunkenTones[v] : sunkenVariants[v], true, isMono)
       );
     }
+    this.sakuraSpriteCacheMap.set(key, {
+      floatingFlower: this.floatingFlowerSprites,
+      sunkenFlower: this.sunkenFlowerSprites,
+      floatingPetal: this.floatingPetalSprites,
+      sunkenPetal: this.sunkenPetalSprites,
+    });
   }
 
   /**
@@ -8052,20 +8886,35 @@ export class AsciiKoiPondRenderer {
   ): void {
     if (false) return;
     const unit = koiClamp(Math.min(worldW, worldH) / 860, 0.48, 1.25);
-    this.ensureSakuraBotanicalSprites(unit, isLight, style);
+    const daylight = this.getDaylightFactor();
+    const blendDayNight = daylight > 0.002 && daylight < 0.998;
+
+    this.ensureSakuraBotanicalSprites(unit, true, style);
+    const daySunkenF = this.sunkenFlowerSprites;
+    const daySunkenP = this.sunkenPetalSprites;
+    let nightSunkenF = daySunkenF;
+    let nightSunkenP = daySunkenP;
+    if (daylight < 0.998) {
+      this.ensureSakuraBotanicalSprites(unit, false, style);
+      nightSunkenF = this.sunkenFlowerSprites;
+      nightSunkenP = this.sunkenPetalSprites;
+    }
 
     const sunkenSpecs = this.getSunkenSakuraSpecs();
     ctx.save();
 
     for (let i = 0; i < sunkenSpecs.length; i++) {
       const sp = sunkenSpecs[i];
-      const sprite =
+      const daySpr =
         sp.kind === "flower"
-          ? this.sunkenFlowerSprites[sp.variant % this.sunkenFlowerSprites.length]
-          : this.sunkenPetalSprites[sp.variant % this.sunkenPetalSprites.length];
-      if (!sprite) continue;
+          ? daySunkenF[sp.variant % daySunkenF.length]
+          : daySunkenP[sp.variant % daySunkenP.length];
+      const nightSpr =
+        sp.kind === "flower"
+          ? nightSunkenF[sp.variant % nightSunkenF.length]
+          : nightSunkenP[sp.variant % nightSunkenP.length];
+      if (!daySpr && !nightSpr) continue;
 
-      // Gentle underwater current sway + enlarging & contracting movement (exclusively on the pond bed!)
       const swayX = Math.sin(time * 0.32 + sp.phase) * 3.2 * unit;
       const swayY = Math.cos(time * 0.27 + sp.phase * 1.1) * 2.6 * unit;
       const w1 = Math.sin(time * 2.25 + sp.phase);
@@ -8082,7 +8931,16 @@ export class AsciiKoiPondRenderer {
       ctx.translate(px, py);
       ctx.rotate(rot);
       ctx.scale(baseScale * pulseScaleX, baseScale * pulseScaleY);
-      ctx.drawImage(sprite, -sprite.width * 0.5, -sprite.height * 0.5);
+      if (blendDayNight) {
+        if (daySpr) ctx.drawImage(daySpr, -daySpr.width * 0.5, -daySpr.height * 0.5);
+        if (nightSpr) {
+          ctx.globalAlpha = 1.0 - daylight;
+          ctx.drawImage(nightSpr, -nightSpr.width * 0.5, -nightSpr.height * 0.5);
+        }
+      } else {
+        const spr = daylight >= 0.5 ? daySpr : nightSpr;
+        if (spr) ctx.drawImage(spr, -spr.width * 0.5, -spr.height * 0.5);
+      }
       ctx.restore();
     }
 
@@ -8106,13 +8964,20 @@ export class AsciiKoiPondRenderer {
     const ch = h + pad * 2;
 
     const key = `${cw}x${ch}:${isLight ? "day" : "night"}:canopy-shadow-v12`;
-    if (this.canopyShadowCanvas && this.canopyShadowKey === key) {
-      return this.canopyShadowCanvas;
+    const cached = this.canopyShadowCache.get(key);
+    if (cached) {
+      this.canopyShadowCanvas = cached;
+      this.canopyShadowKey = key;
+      return cached;
+    }
+    if (this.canopyShadowCache.size >= 4) {
+      this.canopyShadowCache.clear();
     }
 
-    const canvas = this.canopyShadowCanvas ?? document.createElement("canvas");
+    const canvas = document.createElement("canvas");
     canvas.width = cw;
     canvas.height = ch;
+    this.canopyShadowCache.set(key, canvas);
     this.canopyShadowCanvas = canvas;
     this.canopyShadowKey = key;
 
@@ -8461,8 +9326,8 @@ export class AsciiKoiPondRenderer {
         for (let p = 0; p < resolvedPads.length; p++) {
           const lp = resolvedPads[p];
           const st = this.lotusPadStates[p];
-          const lpx = lp.x + st.swayX;
-          const lpy = lp.y + st.swayY;
+          const lpx = lp.x + st.swayX + st.dispX;
+          const lpy = lp.y + st.swayY + st.dispY;
           const dx = a.x - lpx;
           const dy = a.y - lpy;
           const dist = Math.hypot(dx, dy) || 0.001;
@@ -8518,7 +9383,20 @@ export class AsciiKoiPondRenderer {
     }
     } // end if (!skipPhysics)
 
-    // 3. Render all 116 Non-Overlapping Floating Sakura Flowers & Petals (100% crisp, constant size!)
+    // 3. Render all 116 Non-Overlapping Floating Sakura Flowers & Petals with continuous daylight cross-fade!
+    const sakuraDay = this.getDaylightFactor();
+    const sakuraBlend = sakuraDay > 0.002 && sakuraDay < 0.998;
+    this.ensureSakuraBotanicalSprites(unit, true, style);
+    const dayFloatF = this.floatingFlowerSprites;
+    const dayFloatP = this.floatingPetalSprites;
+    let nightFloatF = dayFloatF;
+    let nightFloatP = dayFloatP;
+    if (sakuraDay < 0.998) {
+      this.ensureSakuraBotanicalSprites(unit, false, style);
+      nightFloatF = this.floatingFlowerSprites;
+      nightFloatP = this.floatingPetalSprites;
+    }
+
     ctx.save();
     for (let i = 0; i < n; i++) {
       const p = particles[i];
@@ -8528,17 +9406,30 @@ export class AsciiKoiPondRenderer {
         Math.cos(time * 0.22 - p.phase) * 0.07;
 
       const baseScale = p.kind === "flower" ? p.r / 16.0 : p.r / 9.0;
-      const sprite =
+      const daySpr =
         p.kind === "flower"
-          ? this.floatingFlowerSprites[p.variant % this.floatingFlowerSprites.length]
-          : this.floatingPetalSprites[p.variant % this.floatingPetalSprites.length];
-      if (!sprite) continue;
+          ? dayFloatF[p.variant % dayFloatF.length]
+          : dayFloatP[p.variant % dayFloatP.length];
+      const nightSpr =
+        p.kind === "flower"
+          ? nightFloatF[p.variant % nightFloatF.length]
+          : nightFloatP[p.variant % nightFloatP.length];
+      if (!daySpr && !nightSpr) continue;
 
       ctx.save();
       ctx.translate(p.x, p.y);
       ctx.rotate(rot);
       ctx.scale(baseScale, baseScale);
-      ctx.drawImage(sprite, -sprite.width * 0.5, -sprite.height * 0.5);
+      if (sakuraBlend) {
+        if (daySpr) ctx.drawImage(daySpr, -daySpr.width * 0.5, -daySpr.height * 0.5);
+        if (nightSpr) {
+          ctx.globalAlpha = 1.0 - sakuraDay;
+          ctx.drawImage(nightSpr, -nightSpr.width * 0.5, -nightSpr.height * 0.5);
+        }
+      } else {
+        const spr = sakuraDay >= 0.5 ? daySpr : nightSpr;
+        if (spr) ctx.drawImage(spr, -spr.width * 0.5, -spr.height * 0.5);
+      }
       ctx.restore();
     }
     ctx.restore();
@@ -8591,22 +9482,30 @@ export class AsciiKoiPondRenderer {
     sCtx.save();
     sCtx.scale(shadowScale, shadowScale);
 
-    // 1. Fill unified opaque silhouettes of all Koi at default floor offset (+22, +28) into `shCanvas`
-    sCtx.fillStyle = isLight ? "#140d06" : "#000000";
+    const solar = this.getSolarLightingState();
+    const shDay = solar.daylight;
+    const koiShX = solar.shadowX * 1.10 * unit;
+    const koiShY = solar.shadowY * 1.08 * unit;
+    const padShX = solar.shadowX * unit;
+    const padShY = solar.shadowY * unit;
+    const compShX = solar.shadowX * 0.80 * unit;
+    const compShY = solar.shadowY * 0.81 * unit;
+
+    const shRgb = mixRgb([0, 0, 0], [20, 13, 6], shDay);
+    sCtx.fillStyle = rgbToRgba(shRgb, 1.0);
     for (let i = 0; i < world.koi.length; i++) {
-      this.fillExactKoiShadowSilhouette(sCtx, world.koi[i], 22 * unit, 28 * unit);
+      this.fillExactKoiShadowSilhouette(sCtx, world.koi[i], koiShX, koiShY);
     }
 
-    // 2. Also draw all 9 non-intersecting Lotus Pad floor shadows at default offset (+20, +26) into `shCanvas`
     const lotusPads = this.getResolvedLotusPads(worldW, worldH, unit);
     for (let i = 0; i < lotusPads.length; i++) {
       const lp = lotusPads[i];
       const st = this.lotusPadStates[i];
       const ampBoost = 1.0 + st.excite * 1.65;
-      const swayX = Math.sin(st.leafPhase) * 3.0 * unit * ampBoost + st.swayX;
-      const swayY = Math.cos(st.leafPhase * 0.84 + i) * 2.4 * unit * ampBoost + st.swayY;
-      const cx = lp.x + swayX + 20 * unit;
-      const cy = lp.y + swayY + 26 * unit;
+      const swayX = Math.sin(st.leafPhase) * 3.0 * unit * ampBoost + st.swayX + st.dispX;
+      const swayY = Math.cos(st.leafPhase * 0.84 + i) * 2.4 * unit * ampBoost + st.swayY + st.dispY;
+      const cx = lp.x + swayX + padShX;
+      const cy = lp.y + swayY + padShY;
       sCtx.beginPath();
       sCtx.arc(cx, cy, lp.r * 0.98, 0, Math.PI * 2);
       sCtx.fill();
@@ -8615,36 +9514,25 @@ export class AsciiKoiPondRenderer {
     for (let cIdx = 0; cIdx < compPads.length; cIdx++) {
       const cp = compPads[cIdx];
       const st = this.lotusPadStates[cp.parentIdx];
+      const cst = this.companionLeafStates[cIdx];
       const cPhase = st.leafPhase * 1.08 + cIdx * 0.85;
       const ampBoost = 1.0 + st.excite * 1.55;
-      const swayX = Math.sin(cPhase) * 2.5 * unit * ampBoost + st.swayX * 0.90;
-      const swayY = Math.cos(cPhase * 0.86 + cIdx) * 2.0 * unit * ampBoost + st.swayY * 0.90;
+      const swayX = Math.sin(cPhase) * 2.5 * unit * ampBoost + st.swayX * 0.90 + (cst ? cst.dispX : 0);
+      const swayY = Math.cos(cPhase * 0.86 + cIdx) * 2.0 * unit * ampBoost + st.swayY * 0.90 + (cst ? cst.dispY : 0);
       sCtx.beginPath();
-      sCtx.arc(cp.x + swayX + 16 * unit, cp.y + swayY + 21 * unit, cp.r * 0.95, 0, Math.PI * 2);
+      sCtx.arc(cp.x + swayX + compShX, cp.y + swayY + compShY, cp.r * 0.95, 0, Math.PI * 2);
       sCtx.fill();
     }
     sCtx.restore();
 
-    // 3. Half-resolution Gaussian blur (`10.5 * unit` px at 0.5x scale = `21 * unit` px full-res penumbra!)
     bCtx.save();
-    bCtx.filter = `blur(${Math.max(6, Math.round(10.5 * unit))}px)`;
+    bCtx.filter = `blur(${Math.max(6, Math.round(10.5 * solar.shadowBlurScale * unit))}px)`;
     bCtx.drawImage(shCanvas, 0, 0);
     bCtx.filter = "none";
     bCtx.restore();
 
-    // 4. Punch out (`destination-out`) each Koi's current un-offset (0, 0) body & fins footprint from `blurCanvas`
-    bCtx.save();
-    bCtx.scale(shadowScale, shadowScale);
-    bCtx.globalCompositeOperation = "destination-out";
-    bCtx.fillStyle = "rgba(0, 0, 0, 1)";
-    for (let i = 0; i < world.koi.length; i++) {
-      this.fillExactKoiShadowSilhouette(bCtx, world.koi[i], 0, 0);
-    }
-    bCtx.restore();
-
-    // 5. Composite the darker, more noticeable floor shadow buffer onto the pond floor
     ctx.save();
-    ctx.globalAlpha = isLight ? 0.58 : 0.84;
+    ctx.globalAlpha = koiLerp(0.76, 0.58, shDay) * koiLerp(1.0, 0.78, solar.lowSunWarmth * 0.5);
     ctx.drawImage(blurCanvas, 0, 0, worldW, worldH);
     ctx.restore();
   }
@@ -8681,9 +9569,9 @@ export class AsciiKoiPondRenderer {
 
     const easeDisp = koiSmoothstep(0, 1, this.flashlightDispersal);
     const darkFlashStrength = 1.0 - easeDisp;
-    const daylightFactor = this.getDaylightFactor();
-    // Water caustics active in daylight and smoothly fade out as dusk approaches 1800 hrs
-    const shouldRenderCaustics = isLight && daylightFactor > 0.04;
+    const solar = this.getSolarLightingState();
+    const daylightFactor = solar.daylight;
+    const shouldRenderCaustics = daylightFactor > 0.015;
 
     if (shouldRenderCaustics) {
       const workCanvas = this.causticWorkCanvas ?? document.createElement("canvas");
@@ -8727,15 +9615,26 @@ export class AsciiKoiPondRenderer {
           }
         }
 
-        if (isLight) {
+        if (daylightFactor > 0.015) {
           cCtx.save();
           cCtx.globalCompositeOperation = "destination-in";
-          const sunMask = cCtx.createLinearGradient(0, 0, w, h * 0.85);
-          sunMask.addColorStop(0.0, "rgba(0, 0, 0, 0.45)");
-          sunMask.addColorStop(0.28, "rgba(0, 0, 0, 0.82)");
-          sunMask.addColorStop(0.52, "rgba(0, 0, 0, 1.0)");
-          sunMask.addColorStop(0.76, "rgba(0, 0, 0, 0.78)");
-          sunMask.addColorStop(1.0, "rgba(0, 0, 0, 0.38)");
+          const sx = solar.sunNormX * w;
+          const sy = solar.sunNormY * h;
+          const dirX = w * 0.5 - sx;
+          const dirY = h * 0.5 - sy;
+          const dirLen = Math.hypot(dirX, dirY) || 1;
+          const ux = dirX / dirLen;
+          const uy = dirY / dirLen;
+          const span = Math.hypot(w, h) * 0.55;
+          const gx0 = w * 0.5 - ux * span;
+          const gy0 = h * 0.5 - uy * span;
+          const gx1 = w * 0.5 + ux * span;
+          const gy1 = h * 0.5 + uy * span;
+          const sunMask = cCtx.createLinearGradient(gx0, gy0, gx1, gy1);
+          sunMask.addColorStop(0.0, "rgba(0, 0, 0, 0.96)");
+          sunMask.addColorStop(0.32, "rgba(0, 0, 0, 1.0)");
+          sunMask.addColorStop(0.65, "rgba(0, 0, 0, 0.72)");
+          sunMask.addColorStop(1.0, "rgba(0, 0, 0, 0.28)");
           cCtx.fillStyle = sunMask;
           cCtx.fillRect(0, 0, w, h);
           cCtx.restore();
@@ -8872,14 +9771,17 @@ export class AsciiKoiPondRenderer {
         ctx.closePath();
       };
 
+      const mSolar = this.getSolarLightingState();
+      const mDay = mSolar.daylight;
       if (shadowOffset > 0) {
-        // Exact 7-lobed palmate maple leaf shadow with soft continuous Gaussian penumbra (zero main-canvas ctx.filter stall!)
+        const shScale = shadowOffset / Math.max(1, 26 * unit);
         ctx.save();
-        ctx.shadowColor = isLight ? "rgba(18, 12, 6, 0.52)" : "rgba(0, 0, 0, 0.82)";
-        ctx.shadowBlur = Math.max(4, Math.round(7.5 * unit));
-        ctx.shadowOffsetX = shadowOffset * 0.78;
-        ctx.shadowOffsetY = shadowOffset;
-        ctx.fillStyle = isLight ? "rgba(20, 14, 8, 0.44)" : "rgba(0, 0, 0, 0.72)";
+        const shCol = mixRgb([0, 0, 0], [18, 12, 6], mDay);
+        ctx.shadowColor = rgbToRgba(shCol, koiLerp(0.76, 0.52, mDay));
+        ctx.shadowBlur = Math.max(4, Math.round(7.5 * mSolar.shadowBlurScale * unit));
+        ctx.shadowOffsetX = mSolar.shadowX * shScale * unit;
+        ctx.shadowOffsetY = mSolar.shadowY * shScale * unit;
+        ctx.fillStyle = rgbToRgba(shCol, koiLerp(0.68, 0.44, mDay));
         this.fillMapleLeafSilhouette(ctx, lx, ly, size * 0.96, rot);
         ctx.restore();
       }
@@ -8897,19 +9799,13 @@ export class AsciiKoiPondRenderer {
         size * 1.02
       );
       if (style === "sumie") {
-        if (isHankoAccent) {
-          leafGrad.addColorStop(0.0, `rgba(204, 54, 36, ${alpha.toFixed(3)})`);
-          leafGrad.addColorStop(0.58, `rgba(164, 34, 22, ${alpha.toFixed(3)})`);
-          leafGrad.addColorStop(1.0, `rgba(96, 20, 14, ${(alpha * 0.96).toFixed(3)})`);
-        } else if (isLight) {
-          leafGrad.addColorStop(0.0, `rgba(88, 80, 72, ${alpha.toFixed(3)})`);
-          leafGrad.addColorStop(0.55, `rgba(52, 47, 42, ${alpha.toFixed(3)})`);
-          leafGrad.addColorStop(1.0, `rgba(26, 23, 20, ${(alpha * 0.96).toFixed(3)})`);
-        } else {
-          leafGrad.addColorStop(0.0, `rgba(116, 108, 96, ${alpha.toFixed(3)})`);
-          leafGrad.addColorStop(0.55, `rgba(72, 66, 58, ${alpha.toFixed(3)})`);
-          leafGrad.addColorStop(1.0, `rgba(36, 32, 28, ${(alpha * 0.96).toFixed(3)})`);
-        }
+        // 100% Black-and-white Sumi-e ink wash maple leaves (continuous daylight blend)
+        const c0 = mixRgb([124, 120, 114], [92, 88, 82], mDay);
+        const c1 = mixRgb([76, 72, 68], [48, 45, 42], mDay);
+        const c2 = mixRgb([34, 32, 30], [20, 19, 18], mDay);
+        leafGrad.addColorStop(0.0, rgbToRgba(c0, alpha));
+        leafGrad.addColorStop(0.55, rgbToRgba(c1, alpha));
+        leafGrad.addColorStop(1.0, rgbToRgba(c2, alpha * 0.96));
       } else {
         leafGrad.addColorStop(0.0, `rgba(246, 98, 48, ${alpha.toFixed(3)})`);
         leafGrad.addColorStop(0.48, `rgba(208, 38, 24, ${alpha.toFixed(3)})`);
@@ -8923,6 +9819,12 @@ export class AsciiKoiPondRenderer {
         ctx.rotate(lb.ang);
         traceLobe(size * lb.len, size * lb.w);
         ctx.fill();
+        if (style === "sumie") {
+          ctx.lineWidth = Math.max(1.45, 1.85 * unit);
+          ctx.lineJoin = "round";
+          ctx.strokeStyle = "rgba(10, 9, 8, 0.94)";
+          ctx.stroke();
+        }
         ctx.restore();
       }
 
@@ -8982,34 +9884,49 @@ export class AsciiKoiPondRenderer {
     const unit = koiClamp(Math.min(worldW, worldH) / 860, 0.48, 1.22);
     ctx.save();
 
-    const daylight = this.getDaylightFactor();
-    const h = AsciiKoiPondRenderer.normalizeHours(this.timeOfDayHours);
-    if (daylight > 0.02) {
-      const sunGrad = ctx.createLinearGradient(0, 0, worldW, worldH * 0.65);
+    const solar = this.getSolarLightingState();
+    const daylight = solar.daylight;
+    const h = solar.h;
+    const sunNormX = solar.sunNormX;
+    const sunNormY = solar.sunNormY;
+
+    if (daylight > 0.015) {
+      const beamX0 = worldW * koiClamp(sunNormX - 0.45, 0, 1);
+      const beamY0 = worldH * koiClamp(sunNormY - 0.42, 0, 1);
+      const beamX1 = worldW * koiClamp(sunNormX + 0.45, 0, 1);
+      const beamY1 = worldH * koiClamp(sunNormY + 0.42, 0, 1);
+      const sunGrad = ctx.createLinearGradient(beamX0, beamY0, beamX1, beamY1);
       const sunAlpha = 0.16 * daylight;
-      const sunTone = style === "sumie" ? "250, 244, 232" : "255, 238, 188";
+      const sunTone =
+        style === "sumie"
+          ? "250, 244, 232"
+          : h >= 14.5 && h < 18.2
+            ? "255, 182, 102"
+            : h >= 4.8 && h < 8.6
+              ? "255, 210, 162"
+              : "255, 238, 188";
       sunGrad.addColorStop(0.0, `rgba(${sunTone}, 0)`);
-      sunGrad.addColorStop(0.32, `rgba(${sunTone}, 0)`);
-      sunGrad.addColorStop(0.52, `rgba(${sunTone}, ${sunAlpha.toFixed(3)})`);
+      sunGrad.addColorStop(0.28, `rgba(${sunTone}, 0)`);
+      sunGrad.addColorStop(0.50, `rgba(${sunTone}, ${sunAlpha.toFixed(3)})`);
       sunGrad.addColorStop(0.72, `rgba(${sunTone}, 0)`);
       sunGrad.addColorStop(1.0, `rgba(${sunTone}, 0)`);
       ctx.fillStyle = sunGrad;
       ctx.fillRect(0, 0, worldW, worldH);
     }
 
-    // Continuous Dawn (05:00..08:30) and Late Afternoon / Dusk (14:30..18:00) atmospheric washes
-    if (h >= 5.0 && h < 8.5) {
-      const dawnW = Math.sin(((h - 5.0) / 3.5) * Math.PI);
-      if (dawnW > 0.01) {
-        const dawnCol = style === "sumie" ? "210, 214, 222" : "236, 158, 134";
-        ctx.fillStyle = `rgba(${dawnCol}, ${(0.14 * dawnW).toFixed(3)})`;
+    // Continuous Sunrise / Dawn (04:50..09:00) and Sunset / Dusk (14:20..18:25) subtle atmospheric tint wash
+    if (h >= 4.85 && h < 9.0) {
+      const dawnBell = Math.sin(((h - 4.85) / 4.15) * Math.PI);
+      if (dawnBell > 0.01) {
+        const dawnCol = style === "sumie" ? "210, 214, 222" : "242, 162, 126";
+        ctx.fillStyle = `rgba(${dawnCol}, ${(0.16 * dawnBell).toFixed(3)})`;
         ctx.fillRect(0, 0, worldW, worldH);
       }
-    } else if (h >= 14.5 && h < 18.0) {
-      const duskBell = Math.sin(((h - 14.5) / 3.5) * Math.PI);
+    } else if (h >= 14.35 && h < 18.35) {
+      const duskBell = Math.sin(((h - 14.35) / 4.0) * Math.PI);
       if (duskBell > 0.01) {
-        const goldenCol = style === "sumie" ? "160, 152, 138" : "228, 112, 36";
-        ctx.fillStyle = `rgba(${goldenCol}, ${(0.18 * duskBell).toFixed(3)})`;
+        const goldenCol = style === "sumie" ? "156, 148, 136" : "232, 104, 36";
+        ctx.fillStyle = `rgba(${goldenCol}, ${(0.20 * duskBell).toFixed(3)})`;
         ctx.fillRect(0, 0, worldW, worldH);
       }
     }
@@ -9127,14 +10044,14 @@ export class AsciiKoiPondRenderer {
       const idx = ((perchIdx % resolvedPads.length) + resolvedPads.length) % resolvedPads.length;
       const pad = resolvedPads[idx];
       const st = this.lotusPadStates[idx];
-      const ampBoost = st ? 1.0 + st.excite * 1.65 : 1.0;
-      const swayX = st ? Math.sin(st.leafPhase) * 3.0 * unit * ampBoost + st.swayX : 0;
-      const swayY = st ? Math.cos(st.leafPhase * 0.84 + idx) * 2.4 * unit * ampBoost + st.swayY : 0;
+      const ampBoost = st ? 1.0 + st.excite * 0.22 : 1.0;
+      const swayX = st ? Math.sin(st.leafPhase) * 3.0 * unit * ampBoost + st.swayX + st.dispX : 0;
+      const swayY = st ? Math.cos(st.leafPhase * 0.84 + idx) * 2.4 * unit * ampBoost + st.swayY + st.dispY : 0;
       const cx = pad.x + swayX;
       const cy = pad.y + swayY;
       const notchAngle =
         pad.notch +
-        (st ? Math.sin(st.leafPhase * 0.58) * (0.04 + st.excite * 0.055) + st.rotOffset : 0);
+        (st ? Math.sin(st.leafPhase * 0.58) * (0.025 + st.excite * 0.015) + st.rotOffset : 0);
       const worldAng = notchAngle + offsetAngle;
       const distR = pad.r * offsetR;
       return {
@@ -9149,12 +10066,12 @@ export class AsciiKoiPondRenderer {
       const pad = resolvedPads[idx];
       if (!pad.hasLotus) return null;
       const st = this.lotusPadStates[idx];
-      const lagAmp = st ? 1.0 + st.excite * 1.75 : 1.0;
-      const flSwayX = st ? Math.sin(st.flowerPhase) * 3.8 * unit * lagAmp + st.swayX * 1.18 : 0;
-      const flSwayY = st ? Math.cos(st.flowerPhase * 0.84 + idx) * 3.1 * unit * lagAmp + st.swayY * 1.18 : 0;
+      const lagAmp = st ? 1.0 + st.excite * 0.24 : 1.0;
+      const flSwayX = st ? Math.sin(st.flowerPhase) * 3.8 * unit * lagAmp + st.swayX * 1.18 + st.dispX : 0;
+      const flSwayY = st ? Math.cos(st.flowerPhase * 0.84 + idx) * 3.1 * unit * lagAmp + st.swayY * 1.18 + st.dispY : 0;
       const baseNotch =
         pad.notch +
-        (st ? Math.sin(st.flowerPhase * 0.58) * (0.04 + st.excite * 0.055) + st.rotOffset * 1.12 : 0);
+        (st ? Math.sin(st.flowerPhase * 0.58) * (0.025 + st.excite * 0.015) + st.rotOffset * 1.12 : 0);
       const flX = pad.x + flSwayX + Math.cos(baseNotch + 0.35) * (pad.r * 0.78);
       const flY = pad.y + flSwayY + Math.sin(baseNotch + 0.35) * (pad.r * 0.78);
       const flRad = pad.r * 0.64;
@@ -9171,15 +10088,16 @@ export class AsciiKoiPondRenderer {
       const idx = ((perchIdx % companionLeaves.length) + companionLeaves.length) % companionLeaves.length;
       const comp = companionLeaves[idx];
       const st = this.lotusPadStates[comp.parentIdx];
+      const cst = this.companionLeafStates[idx];
       const cPhase = st.leafPhase * 1.08 + idx * 0.85;
-      const ampBoost = 1.0 + st.excite * 1.55;
-      const swayX = Math.sin(cPhase) * 2.5 * unit * ampBoost + st.swayX * 0.90;
-      const swayY = Math.cos(cPhase * 0.86 + idx) * 2.0 * unit * ampBoost + st.swayY * 0.90;
+      const ampBoost = 1.0 + st.excite * 0.22;
+      const swayX = Math.sin(cPhase) * 2.5 * unit * ampBoost + st.swayX * 0.90 + (cst ? cst.dispX : 0);
+      const swayY = Math.cos(cPhase * 0.86 + idx) * 2.0 * unit * ampBoost + st.swayY * 0.90 + (cst ? cst.dispY : 0);
       const cx = comp.x + swayX;
       const cy = comp.y + swayY;
       const notchAngle =
         comp.notch +
-        Math.sin(cPhase * 0.62) * (0.045 + st.excite * 0.05) +
+        Math.sin(cPhase * 0.62) * (0.025 + st.excite * 0.015) +
         st.rotOffset * 0.92;
       const worldAng = notchAngle + offsetAngle;
       const distR = comp.r * koiClamp(offsetR, 0.18, 0.48);
@@ -9323,7 +10241,11 @@ export class AsciiKoiPondRenderer {
     skipPhysics: boolean
   ): void {
     const dfFactor = this.getDaytimeDragonflyFactor();
-    if (dfFactor <= 0.005) return;
+    const hNow = KoiPondRenderer.normalizeHours(this.timeOfDayHours);
+    const isDuskDepart = hNow >= 15.65 || hNow < 5.75;
+    const isDawnArrive = hNow >= 5.75 && hNow < 9.5 && dfFactor < 0.99;
+    const anyStillInView = this.dragonflyStates.some((d) => d.initialized && !d.departed);
+    if (dfFactor <= 0.005 && !anyStillInView) return;
 
     const unit = koiClamp(Math.min(worldW, worldH) / 860, 0.48, 1.25);
     const isSumie = style === "sumie";
@@ -9342,7 +10264,7 @@ export class AsciiKoiPondRenderer {
 
     for (let i = 0; i < this.dragonflyStates.length; i++) {
       const df = this.dragonflyStates[i];
-      if (!df.initialized || df.x <= 0 || df.y <= 0) {
+      if (!df.initialized) {
         const seedX = 0.18 + ((i * 0.17) % 0.68);
         const seedY = 0.20 + (((i * 0.29) + 0.11) % 0.64);
         df.x = seedX * worldW;
@@ -9381,13 +10303,81 @@ export class AsciiKoiPondRenderer {
         } else {
           df.perchType = "none";
           df.perchPadIdx = -1;
-          df.flightTimeLeft = 9.5 + i * 2.1;
+          df.flightTimeLeft = 14.0 + i * 3.0;
         }
         df.initialized = true;
       }
 
       if (!skipPhysics) {
-        // Cursor proximity wobbling/startling removed per critique so dragonflies remain steady
+        if (isDuskDepart && !df.departed) {
+          if (df.mode === "perched" || df.perchType !== "none") {
+            df.mode = "darting";
+            df.perchType = "none";
+            df.perchPadIdx = -1;
+            df.modeTimer = 3.0;
+          }
+          const dLeft = df.x;
+          const dRight = worldW - df.x;
+          const dTop = df.y;
+          const dBottom = worldH - df.y;
+          const minEdge = Math.min(dLeft, dRight, dTop, dBottom);
+          const marginOut = 105 * unit;
+          if (minEdge === dLeft) {
+            df.targetX = -marginOut;
+            df.targetY = koiClamp(df.y + (i - 2) * 28 * unit, 40 * unit, worldH - 40 * unit);
+          } else if (minEdge === dRight) {
+            df.targetX = worldW + marginOut;
+            df.targetY = koiClamp(df.y + (i - 2) * 28 * unit, 40 * unit, worldH - 40 * unit);
+          } else if (minEdge === dTop) {
+            df.targetX = koiClamp(df.x + (i - 2) * 32 * unit, 40 * unit, worldW - 40 * unit);
+            df.targetY = -marginOut;
+          } else {
+            df.targetX = koiClamp(df.x + (i - 2) * 32 * unit, 40 * unit, worldW - 40 * unit);
+            df.targetY = worldH + marginOut;
+          }
+          df.mode = "darting";
+          df.wingPhase += dt * 48.0;
+          const edx = df.targetX - df.x;
+          const edy = df.targetY - df.y;
+          const edist = Math.hypot(edx, edy);
+          if (df.x < -52 * unit || df.x > worldW + 52 * unit || df.y < -52 * unit || df.y > worldH + 52 * unit || edist < 18 * unit) {
+            df.departed = true;
+          } else {
+            const ang = Math.atan2(edy, edx);
+            const exitSpd = (430 + (i % 3) * 55) * unit;
+            df.vx += (Math.cos(ang) * exitSpd - df.vx) * Math.min(1, dt * 8.5);
+            df.vy += (Math.sin(ang) * exitSpd - df.vy) * Math.min(1, dt * 8.5);
+            df.x += df.vx * dt;
+            df.y += df.vy * dt;
+            let diff = ang - df.heading;
+            while (diff > Math.PI) diff -= Math.PI * 2;
+            while (diff < -Math.PI) diff += Math.PI * 2;
+            df.heading += diff * Math.min(1, dt * 12);
+          }
+          continue;
+        }
+
+        if (!isDuskDepart && df.departed && dfFactor > 0.02) {
+          df.departed = false;
+          df.mode = "darting";
+          df.perchType = "none";
+          df.perchPadIdx = -1;
+          df.modeTimer = 2.6 + (i % 3) * 0.5;
+          df.flightTimeLeft = 8.0 + i * 2.0;
+          const edge = i % 4;
+          const spawnOut = 64 * unit;
+          if (edge === 0) { df.x = worldW + spawnOut; df.y = (0.18 + i * 0.14) * worldH; }
+          else if (edge === 1) { df.x = -spawnOut; df.y = (0.22 + i * 0.13) * worldH; }
+          else if (edge === 2) { df.x = (0.20 + i * 0.15) * worldW; df.y = -spawnOut; }
+          else { df.x = (0.25 + i * 0.14) * worldW; df.y = worldH + spawnOut; }
+          df.targetX = (0.20 + ((i * 0.19 + 0.08) % 0.62)) * worldW;
+          df.targetY = (0.22 + ((i * 0.23 + 0.10) % 0.56)) * worldH;
+          df.heading = Math.atan2(df.targetY - df.y, df.targetX - df.x);
+          df.vx = Math.cos(df.heading) * 280 * unit;
+          df.vy = Math.sin(df.heading) * 280 * unit;
+        }
+        if (df.departed) continue;
+
         df.modeTimer -= dt;
         if (df.mode !== "perched" && df.flightTimeLeft > 0) {
           df.flightTimeLeft = Math.max(0, df.flightTimeLeft - dt);
@@ -9428,7 +10418,7 @@ export class AsciiKoiPondRenderer {
             if (df.modeTimer <= 0) {
               df.mode = "darting";
               // Fly for much longer (9.5 to 15.0 seconds across multiple open-water waypoints) before perching again
-              df.flightTimeLeft = 9.5 + hash2D(i, Math.floor(time * 2), 701) * 5.5;
+              df.flightTimeLeft = 14.0 + hash2D(i, Math.floor(time * 2), 701) * 8.0;
               df.modeTimer = 2.1 + hash2D(i, Math.floor(time * 2), 709) * 1.6;
               df.perchType = "none";
               df.perchPadIdx = -1;
@@ -9592,27 +10582,48 @@ export class AsciiKoiPondRenderer {
 
     // Render all 5 dragonflies (shadows & reflections first, then bodies & gossamer wings)
     ctx.save();
+    const dfSolar = this.getSolarLightingState();
 
     for (let i = 0; i < this.dragonflyStates.length; i++) {
       const df = this.dragonflyStates[i];
-      if (!df.initialized) continue;
+      if (!df.initialized || df.departed) continue;
+      const edgeDist = Math.min(df.x, worldW - df.x, df.y, worldH - df.y);
+      const edgeFade = koiSmoothstep(-42 * unit, 22 * unit, edgeDist);
+      const dfVisAlpha = isDuskDepart ? edgeFade : (isDawnArrive ? Math.max(edgeFade, dfFactor) : Math.min(1, dfFactor * 1.15));
+      if (dfVisAlpha <= 0.01) continue;
 
       const s = df.scale * unit;
       const isPerched = df.mode === "perched";
+      if (isPerched) {
+        const pose = this.getDragonflyPerchWorldPose(
+          df.perchType,
+          df.perchPadIdx,
+          df.perchOffsetAngle,
+          df.perchOffsetR,
+          df.perchLocalHeading,
+          resolvedPads,
+          companionLeaves,
+          liveMaples,
+          unit
+        );
+        if (pose) {
+          df.x = pose.x;
+          df.y = pose.y;
+          df.heading = pose.heading;
+        }
+      }
       const bodyLen = 28 * s;
       const wingSpan = 22 * s;
-      const wingBeat = isPerched
-        ? Math.sin(df.wingPhase) * 0.04
-        : Math.sin(df.wingPhase) * 0.28;
+      const wingBeat = isPerched ? 0 : Math.sin(df.wingPhase) * 0.28;
 
-      // 1. Soft Underwater / Leaf-Surface Shadow
-      const shOffset = (isPerched ? 3.2 : 14.5) * unit;
+      // 1. Soft Underwater / Leaf-Surface Shadow aligned to live solar shadow vector
+      const shMult = isPerched ? 0.14 : 0.58;
       const shScale = isPerched ? 0.98 : 0.90;
       ctx.save();
-      ctx.translate(df.x + shOffset * 0.78, df.y + shOffset);
+      ctx.translate(df.x + dfSolar.shadowX * shMult * unit, df.y + dfSolar.shadowY * shMult * unit);
       ctx.rotate(df.heading);
       ctx.scale(shScale, shScale);
-      ctx.globalAlpha = (isPerched ? 0.34 : 0.22) * dfFactor;
+      ctx.globalAlpha = (isPerched ? 0.34 : 0.22) * dfVisAlpha;
       ctx.fillStyle = "rgba(14, 10, 6, 1)";
 
       // Shadow abdomen + thorax
@@ -9641,11 +10652,11 @@ export class AsciiKoiPondRenderer {
 
       // 2. Faint Rippled Water / Lily-Pad Reflection beneath the dragonfly
       const reflOffset = (isPerched ? 1.8 : 6.5) * unit;
-      const rippleJit = Math.sin(time * 4.2 + i * 1.7) * 1.4 * unit;
+      const rippleJit = isPerched ? 0 : Math.sin(time * 2.4 + i * 1.7) * 0.8 * unit;
       ctx.save();
       ctx.translate(df.x + rippleJit, df.y + reflOffset);
       ctx.rotate(df.heading);
-      ctx.globalAlpha = 0.16 * dfFactor;
+      ctx.globalAlpha = 0.16 * dfVisAlpha;
       const reflGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, wingSpan * 1.05);
       if (isSumie) {
         reflGrad.addColorStop(0.0, "rgba(218, 212, 198, 0.55)");
@@ -9669,7 +10680,7 @@ export class AsciiKoiPondRenderer {
       ctx.save();
       ctx.translate(df.x, df.y);
       ctx.rotate(df.heading);
-      ctx.globalAlpha = dfFactor;
+      ctx.globalAlpha = dfVisAlpha;
 
       // 3A. Slender Segmented Abdomen (8 tapering segments behind thorax)
       const isAki = df.variety === "akiakane";
@@ -9700,6 +10711,11 @@ export class AsciiKoiPondRenderer {
         ctx.beginPath();
         ctx.ellipse(segX, 0, segLen * 0.62, segW, 0, 0, Math.PI * 2);
         ctx.fill();
+        if (isSumie) {
+          ctx.lineWidth = Math.max(0.85, 0.95 * s);
+          ctx.strokeStyle = "rgba(10, 9, 8, 0.92)";
+          ctx.stroke();
+        }
 
         // Subtle dark segment ring & dorsal highlight
         ctx.fillStyle = "rgba(18, 14, 10, 0.55)";
@@ -9717,6 +10733,11 @@ export class AsciiKoiPondRenderer {
       ctx.beginPath();
       ctx.ellipse(bodyLen * 0.12, 0, 4.4 * s, 2.45 * s, 0, 0, Math.PI * 2);
       ctx.fill();
+      if (isSumie) {
+        ctx.lineWidth = Math.max(0.95, 1.05 * s);
+        ctx.strokeStyle = "rgba(10, 9, 8, 0.92)";
+        ctx.stroke();
+      }
 
       // Dorsal thoracic highlight
       ctx.fillStyle = isSumie
@@ -9911,11 +10932,17 @@ export class AsciiKoiPondRenderer {
     const fireflyFactor = this.getEveningFireflyFactor();
     if (fireflyFactor <= 0.005) return;
 
+    // When toggled to dark mode via click, delay fireflies by 2.0s then emerge in arithmetic progression
+    const hasToggleDelay = this.darkModeToggleAt > 0;
+    const sinceDarkToggleSec = hasToggleDelay ? (performance.now() - this.darkModeToggleAt) / 1000 : 999;
+    if (hasToggleDelay && sinceDarkToggleSec < 2.0) return;
+
     const unit = koiClamp(Math.min(worldW, worldH) / 860, 0.48, 1.25);
     const isSumie = style === "sumie";
 
-    // 32 tiny warm golden light sources scattered naturally across the pond
+    // 32 tiny warm golden light sources emerging in arithmetic progression from the shoreline
     const count = 32;
+    const apStepSec = 0.14; // t_i = 2.0 + 0.14 * i seconds
     const fireflies: {
       x: number;
       y: number;
@@ -9947,6 +10974,17 @@ export class AsciiKoiPondRenderer {
       const anchorX = koiClamp(0.05 + b2 * 0.90 + jx, 0.04, 0.95) * worldW;
       const anchorY = koiClamp(0.06 + b3 * 0.88 + jy, 0.05, 0.95) * worldH;
 
+      let emerge: number;
+      if (hasToggleDelay) {
+        const apStartSec = 2.0 + i * apStepSec;
+        if (sinceDarkToggleSec < apStartSec) continue;
+        emerge = koiSmoothstep(0, 1, koiClamp((sinceDarkToggleSec - apStartSec) / 0.85, 0, 1));
+      } else {
+        const stagger = hash2D(i, 61, 941) * 0.24;
+        const emergeRaw = koiClamp((fireflyFactor - stagger * 0.65) / Math.max(0.25, 0.94 - stagger * 0.65), 0, 1);
+        emerge = koiSmoothstep(0, 1, emergeRaw);
+      }
+
       const freq1 = 0.24 + hash2D(i, 11, 941) * 0.22;
       const freq2 = 0.38 + hash2D(i, 13, 941) * 0.28;
       const ph1 = hash2D(i, 17, 941) * Math.PI * 2;
@@ -9974,7 +11012,7 @@ export class AsciiKoiPondRenderer {
         x: fx,
         y: fy,
         scale,
-        alpha: Math.min(1.0, fireflyFactor * pulse * 1.20),
+        alpha: Math.min(1.0, fireflyFactor * emerge * pulse * 1.20),
       });
     }
 
@@ -10218,7 +11256,7 @@ export class AsciiKoiPondRenderer {
     const outerRadius = koiLerp(baseRadius, maxDiag, easeDisp * easeDisp);
     const innerCoreR = outerRadius * 0.10;
 
-    const maxVeilAlpha = 0.968 * (1 - easeDisp * 0.92);
+    const maxVeilAlpha = 0.968 * (1 - easeDisp);
     if (maxVeilAlpha <= 0.005) return;
 
     ctx.save();
@@ -10281,8 +11319,8 @@ export class AsciiKoiPondRenderer {
     if (!skipPhysics) {
       this.updateFlashlightAndBotanicalState(width, height, world, effW, effH, time);
     }
-    const isLight = this.isLightMode;
     const daylight = this.getDaylightFactor();
+    const isLight = daylight >= 0.35;
 
     if (daylight >= 0.998) {
       const parchmentDay = this.ensureParchmentCanvas(width, height, true);
@@ -10297,18 +11335,6 @@ export class AsciiKoiPondRenderer {
       ctx.save();
       ctx.globalAlpha = 1.0 - daylight;
       ctx.drawImage(parchmentNight, 0, 0, width, height);
-      ctx.restore();
-    }
-
-    if (this.transitioning && this.previousPalette) {
-      const prevParchment = this.ensureParchmentCanvas(
-        width,
-        height,
-        this.previousPalette.isLight
-      );
-      ctx.save();
-      ctx.globalAlpha = 1 - koiSmoothstep(0, 1, this.themeProgress);
-      ctx.drawImage(prevParchment, 0, 0, width, height);
       ctx.restore();
     }
 
@@ -10331,9 +11357,10 @@ export class AsciiKoiPondRenderer {
     // 2B. Underwater Stems Pass 2 & Pass 3: Surface Stems (drawn over the stones) & Lateral Buds (pedicels with closed buds / coiled scrolls)
     this.paintUnderwaterStemsPass(ctx, effW, effH, time, isLight, this.artStyle, "surface-and-buds");
 
-    // Deepen the riverbed stones and water during sunset/twilight while keeping surface flora & koi vibrant
-    if (isLight && daylight < 0.995) {
-      const bedDarkness = (1.0 - daylight) * 0.58;
+    // Smooth twilight riverbed deepening bell curve (0.0 at both full day and full night — zero snap!)
+    if (daylight > 0.001 && daylight < 0.999) {
+      const twilightBell = Math.sin(daylight * Math.PI);
+      const bedDarkness = twilightBell * 0.24;
       ctx.fillStyle = `rgba(8, 6, 4, ${bedDarkness.toFixed(3)})`;
       ctx.fillRect(0, 0, effW, effH);
     }
@@ -10370,9 +11397,10 @@ export class AsciiKoiPondRenderer {
     this.paintOverhangingSakuraCanopy(ctx, world, effW, effH, time, isLight, this.artStyle, skipPhysics);
     this.paintDaytimeDragonflies(ctx, effW, effH, time, isLight, this.artStyle, skipPhysics);
 
-    // Progressive dusk/dawn darkening veil over the pond as daylight approaches 0 (1800 hrs)
-    if (isLight && daylight < 0.995) {
-      const duskDarkness = (1.0 - daylight) * 0.36;
+    // Smooth twilight veil bell curve (0.0 at both full day and full night — zero snap into night!)
+    if (daylight > 0.001 && daylight < 0.999) {
+      const twilightBell = Math.sin(daylight * Math.PI);
+      const duskDarkness = twilightBell * 0.14;
       ctx.fillStyle = `rgba(8, 6, 4, ${duskDarkness.toFixed(3)})`;
       ctx.fillRect(0, 0, effW, effH);
     }
@@ -10392,14 +11420,15 @@ export class AsciiKoiPondRenderer {
     // When the Profile Menu opens, blur the pond background instead of blanking it,
     // then render opaque column backings (in Dark Mode) and the sharp left portrait frame on top
     if (this.rectProgress > 0.002) {
-      const effectiveBlur = this.menuBlurPx * rect.progress;
+      const effectiveBlur = this.menuBlurPx * this.rectProgress;
       if (effectiveBlur > 0.15) {
         this.applyPondBlurInPlace(ctx, width, height, effectiveBlur);
       }
 
-      if (!isLight && this.activeColumnRects.length > 0) {
+      if (daylight < 0.995 && this.activeColumnRects.length > 0) {
         ctx.save();
-        ctx.globalAlpha = this.rippleReducedMotion ? this.rectProgress : 1.0;
+        const colDarkAlpha = (1.0 - daylight) * (this.rippleReducedMotion ? this.rectProgress : 1.0);
+        ctx.globalAlpha = colDarkAlpha;
         if (this.rectProgress < 0.999 && !this.rippleReducedMotion) {
           const colsBounds = this.computeColumnsStageBounds(width, height);
           const colsOrigin = computeVirtualCenter(colsBounds);

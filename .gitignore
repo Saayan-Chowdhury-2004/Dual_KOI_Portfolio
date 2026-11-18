@@ -5,6 +5,9 @@ node_modules/
 dist/
 build/
 
+# Scratch & temporary testing
+scratch/
+
 # Logs
 npm-debug.log*
 yarn-debug.log*

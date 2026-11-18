@@ -16,7 +16,7 @@ export {
   CONTACT_CHANNELS,
 } from "./portfolioData";
 export {
-  AsciiKoiPondRenderer,
+  KoiPondRenderer,
   KOI_ART_STYLES,
   type KoiArtStyle,
   type KoiArtStyleMeta,
@@ -25,3 +25,10 @@ export { PondWorld } from "./pondWorld";
 export { POND_PALETTES } from "./koiPond";
 export { KOI_VARIETIES, VARIETY_ORDER } from "./koiVarieties";
 export type { KoiSpec, KoiVariety, KoiFish, KoiPondConfig, PondFish } from "./koiTypes";
+export {
+  CAUDAL_FIN_CONFIG,
+  CaudalFinScratchBuffer,
+  computeCaudalFin,
+  traceCaudalFinPath,
+  strokeCaudalFinRays,
+} from "./caudalFin";

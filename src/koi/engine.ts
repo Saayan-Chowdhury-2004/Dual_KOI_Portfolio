@@ -8,7 +8,7 @@ import { clamp } from "../math";
 import type { SharedPortfolioState } from "../sharedState";
 import { BrutalistPortfolioUI } from "./portfolioColumns";
 import {
-  AsciiKoiPondRenderer,
+  KoiPondRenderer,
   type KoiArtStyle,
   type KoiArtStyleMeta,
 } from "./koiRenderer";
@@ -27,11 +27,13 @@ const CONTROLS_STYLE_ID = "manuscript-floating-controls-styles";
 
 export class KoiPondEngine {
   private world: PondWorld;
-  private renderer: AsciiKoiPondRenderer;
+  private renderer: KoiPondRenderer;
   private portfolioUI: BrutalistPortfolioUI;
   private controlsEl: HTMLElement;
   private toggleBtn!: HTMLButtonElement;
   private toggleIconEl!: HTMLImageElement;
+  private toggleSunIconEl!: HTMLImageElement;
+  private toggleMoonIconEl!: HTMLImageElement;
   private profileBtn!: HTMLButtonElement;
   private flashlightBtn!: HTMLButtonElement;
 
@@ -94,7 +96,7 @@ export class KoiPondEngine {
     this.baseDetail = config.detailQuality;
 
     this.world = sharedWorld ?? new PondWorld(config);
-    this.renderer = new AsciiKoiPondRenderer();
+    this.renderer = new KoiPondRenderer();
     if (initialStyle) {
       this.renderer.setArtStyle(initialStyle);
     }
@@ -148,7 +150,7 @@ export class KoiPondEngine {
 
   private getCurrentSystemHours(): number {
     if (this.simulatedSystemHours !== null && Number.isFinite(this.simulatedSystemHours)) {
-      return AsciiKoiPondRenderer.normalizeHours(this.simulatedSystemHours);
+      return KoiPondRenderer.normalizeHours(this.simulatedSystemHours);
     }
     const now = new Date();
     return (
@@ -438,6 +440,12 @@ export class KoiPondEngine {
         user-select: none;
       }
 
+      #layer-koi .ms-ctrl-icon--celestial {
+        position: absolute;
+        inset: 0;
+        will-change: transform, opacity;
+      }
+
       #layer-koi .ms-ctrl-btn--flashlight-off {
         opacity: 0.62;
         filter: saturate(0.72) brightness(0.76);
@@ -470,12 +478,21 @@ export class KoiPondEngine {
     toggleBtn.setAttribute("aria-checked", this.renderer.isLightMode ? "true" : "false");
     toggleBtn.setAttribute("aria-label", "Toggle black and light pond");
 
-    const toggleIcon = document.createElement("img");
-    toggleIcon.className = "ms-ctrl-icon";
-    toggleIcon.alt = "";
-    toggleIcon.draggable = false;
-    toggleIcon.src = this.renderer.isLightMode ? ICON_SUN_URI : ICON_MOON_URI;
-    toggleBtn.appendChild(toggleIcon);
+    const sunIcon = document.createElement("img");
+    sunIcon.className = "ms-ctrl-icon ms-ctrl-icon--celestial";
+    sunIcon.alt = "";
+    sunIcon.draggable = false;
+    sunIcon.src = ICON_SUN_URI;
+
+    const moonIcon = document.createElement("img");
+    moonIcon.className = "ms-ctrl-icon ms-ctrl-icon--celestial";
+    moonIcon.alt = "";
+    moonIcon.draggable = false;
+    moonIcon.src = ICON_MOON_URI;
+
+    toggleBtn.appendChild(sunIcon);
+    toggleBtn.appendChild(moonIcon);
+    const toggleIcon = sunIcon;
 
     toggleBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -484,6 +501,7 @@ export class KoiPondEngine {
       this.renderer.setLightMode(nextLight, false);
       this.updateControlsUI();
       this.syncPortfolioUI(0);
+      this.renderFrame();
       this.schedule();
       if (this.reducedMotion.matches) this.drawStill();
       this.emitStateChange();
@@ -562,6 +580,8 @@ export class KoiPondEngine {
 
     this.toggleBtn = toggleBtn;
     this.toggleIconEl = toggleIcon;
+    this.toggleSunIconEl = sunIcon;
+    this.toggleMoonIconEl = moonIcon;
     this.profileBtn = profileBtn;
     this.flashlightBtn = flashlightBtn;
 
@@ -582,10 +602,9 @@ export class KoiPondEngine {
       this.lastControlsLightMode = isLight;
       this.controlsEl.classList.toggle("ms-controls--night", !isLight);
       this.toggleBtn.setAttribute("aria-checked", isLight ? "true" : "false");
-      this.toggleIconEl.src = isLight ? ICON_SUN_URI : ICON_MOON_URI;
-      // Keep the Lantern button hidden in Light Mode; show it only in Dark Mode
       this.flashlightBtn.style.display = isLight ? "none" : "flex";
     }
+    this.syncCelestialToggleArc();
 
     if (this.lastControlsOpen !== isOpen) {
       this.lastControlsOpen = isOpen;
@@ -701,7 +720,28 @@ export class KoiPondEngine {
       this.world.time,
       this.world.config
     );
+    this.syncCelestialToggleArc();
     this.syncFlashlightDomVeil();
+  }
+
+  private syncCelestialToggleArc(): void {
+    if (!this.toggleSunIconEl || !this.toggleMoonIconEl) return;
+    const daylight = this.renderer.getDaylightFactor();
+    const night = 1.0 - daylight;
+
+    const sunArcX = -night * 46;
+    const sunArcY = Math.pow(night, 1.35) * 44;
+    const sunRot = -night * 65;
+    const sunScale = 0.72 + daylight * 0.28;
+    this.toggleSunIconEl.style.opacity = Math.min(1, Math.pow(daylight, 0.75)).toFixed(3);
+    this.toggleSunIconEl.style.transform = `translate3d(${sunArcX.toFixed(1)}%, ${sunArcY.toFixed(1)}%, 0) rotate(${sunRot.toFixed(1)}deg) scale(${sunScale.toFixed(3)})`;
+
+    const moonArcX = daylight * 46;
+    const moonArcY = Math.pow(daylight, 1.35) * 44;
+    const moonRot = daylight * 65;
+    const moonScale = 0.72 + night * 0.28;
+    this.toggleMoonIconEl.style.opacity = Math.min(1, Math.pow(night, 0.75)).toFixed(3);
+    this.toggleMoonIconEl.style.transform = `translate3d(${moonArcX.toFixed(1)}%, ${moonArcY.toFixed(1)}%, 0) rotate(${moonRot.toFixed(1)}deg) scale(${moonScale.toFixed(3)})`;
   }
 
   /**

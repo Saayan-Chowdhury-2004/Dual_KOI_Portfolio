@@ -14,7 +14,7 @@
 // TUNABLE SHOCKWAVE CONSTANTS (Grouped at top per specification)
 // ============================================================================
 
-/** Target square tile size in CSS pixels (snapped to an integer multiple of pond ASCII cell size in 16..24px). */
+/** Target square tile size in CSS pixels (snapped to an integer multiple of pond grid cell size in 16..24px). */
 export const RIPPLE_TARGET_TILE_PX = 20;
 
 /** Minimum allowed square tile size in CSS pixels. */
@@ -157,7 +157,7 @@ export function computeVirtualCenter(bounds: RippleCompositionBounds): RippleOri
 
 /**
  * Computes the square tile size in CSS pixels as an exact integer multiple of the pond's
- * ASCII cell size (`cellWidth`/`cellHeight`) landing in `[16, 24]px`, while respecting
+ * pond grid cell size (`cellWidth`/`cellHeight`) landing in `[16, 24]px`, while respecting
  * the engine's quality governor (`qualityLevel`) and mobile/total tile count caps.
  */
 export function computeAlignedTileSize(

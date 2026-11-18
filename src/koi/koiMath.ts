@@ -1,6 +1,6 @@
 /**
  * Mathematical utilities, deterministic PRNG, 2D value noise, and
- * divergence-free ambient water current fields for the ASCII koi pond.
+ * divergence-free ambient water current fields for the koi pond.
  */
 
 export const KOI_TAU = Math.PI * 2;

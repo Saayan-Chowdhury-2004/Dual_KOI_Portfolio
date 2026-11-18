@@ -18,24 +18,25 @@ export const SPINE_NODE_COUNT = 20;
 export function koiBodyHalfWidth(s: number, maxHalfWidth: number): number {
   if (s < 0 || s > 0.845) return 0;
 
-  // 1. Rounded snout to operculum / shoulder (s: 0.0 -> 0.25)
-  if (s < 0.25) {
-    const t = s / 0.25;
-    const base = Math.pow(t, 0.52) * (0.94 + 0.06 * Math.sin(t * Math.PI));
-    return maxHalfWidth * koiClamp(base, 0, 1);
+  // 1. Continuous smooth convex ovoid head dome from rounded snout tip to gill shoulders (s: 0.0 -> 0.285)
+  if (s < 0.285) {
+    const t = s / 0.285;
+    const ovoid = Math.pow(Math.sin(t * Math.PI * 0.5), 0.58);
+    return maxHalfWidth * koiClamp(ovoid, 0, 1);
   }
 
-  // 2. Broad dorsal shoulder & anterior ribcage (s: 0.25 -> 0.38)
-  if (s < 0.38) {
-    const t = (s - 0.25) / 0.13;
-    return maxHalfWidth * (1.0 - 0.03 * t * t);
+  // 2. Full muscular cylindrical trunk behind gill covers (s: 0.285 -> 0.46)
+  if (s < 0.46) {
+    const t = (s - 0.285) / 0.175;
+    return maxHalfWidth * (1.0 - 0.045 * t * t);
   }
 
-  // 3. Full spindle torso tapering smoothly into the muscular caudal peduncle (s: 0.38 -> 0.845)
-  const t = koiClamp((s - 0.38) / 0.465, 0, 1);
-  const peduncleRatio = 0.175;
-  const curve = (1 - t) * (1 - 0.36 * t * t) + peduncleRatio * (t * t * (3 - 2 * t));
-  return maxHalfWidth * koiClamp(curve * 0.97, peduncleRatio * 0.9, 1.0);
+  // 3. Smooth muscular carp taper through mid/lower torso into slender peduncle (s: 0.46 -> 0.845)
+  const t = koiClamp((s - 0.46) / 0.385, 0, 1);
+  const peduncleRatio = 0.165;
+  const smoothT = t * t * (3 - 2 * t);
+  const curve = 0.955 * Math.pow(1 - t, 1.14) * (1 - 0.12 * smoothT) + peduncleRatio * (1 - Math.pow(1 - t, 1.45));
+  return maxHalfWidth * koiClamp(curve, peduncleRatio, 1.0);
 }
 
 /**

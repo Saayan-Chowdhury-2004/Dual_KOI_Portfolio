@@ -53,7 +53,7 @@ export function pickKoiName(variety: KoiVariety, index: number): string {
  * - u in [-1, 1] runs laterally from left body contour (-1) across dorsal spine (0) to right contour (+1)
  */
 export function generateVarietyPatchesAndColors(
-  variety: KoiVariety,
+  _variety: KoiVariety,
   seed: number
 ): {
   patches: OrganicPatch[];
@@ -63,110 +63,136 @@ export function generateVarietyPatchesAndColors(
   const patches: OrganicPatch[] = [];
 
   const shiroRgb: [number, number, number] = [
-    246 + Math.round(rand() * 7),
-    244 + Math.round(rand() * 7),
-    236 + Math.round(rand() * 8)
+    244 + Math.round(rand() * 4),
+    237 + Math.round(rand() * 4),
+    224 + Math.round(rand() * 5),
   ];
-
-  const hiWarmth = rand();
   const hiRgb: [number, number, number] = [
-    238 + Math.round(rand() * 16),
-    Math.round(54 + hiWarmth * 36),
-    Math.round(28 + hiWarmth * 14)
+    242 + Math.round(rand() * 6),
+    56 + Math.round(rand() * 10),
+    8 + Math.round(rand() * 6),
   ];
+  const sumiRgb: [number, number, number] = [14, 14, 16];
 
-  const sumiRgb: [number, number, number] = [28, 34, 42];
+  const baseRgb: [number, number, number] = [...shiroRgb];
+  const finRgb: [number, number, number] = [246, 236, 220];
+  const mirror = seed === 101 ? 1 : (rand() < 0.5 ? 1 : -1);
+  const jitS = () => (seed === 101 ? 0 : (rand() - 0.5) * 0.014);
+  const jitU = () => (seed === 101 ? 0 : (rand() - 0.5) * 0.04);
 
-  let baseRgb: [number, number, number] = [...shiroRgb];
-  const finRgb: [number, number, number] = [238, 236, 228];
-  let hasMotoguro = false;
+  // 1. Broad, lush 4-lobed scalloped cranial Hi shield (~74% of crown width, rounded dome top & bilobed base)
+  patches.push({
+    sCenter: 0.160 + jitS() * 0.3,
+    uCenter: jitU() * 0.08,
+    sRadius: 0.094 + (seed === 101 ? 0.002 : rand() * 0.004),
+    uRadius: 0.64 + (seed === 101 ? 0.01 : rand() * 0.03),
+    warpFreq: 4.0,
+    warpAmp: 0.11,
+    phase: rand() * 100,
+    layer: 'hi',
+  });
 
-  if (variety === 'kohaku') {
-    const numSteps = 3 + (rand() > 0.55 ? 1 : 0);
-    const spanStart = 0.06 + rand() * 0.04;
-    const spanEnd = 0.76;
-    const stepLen = (spanEnd - spanStart) / numSteps;
+  // 2. Strongly asymmetric diagonal upper-shoulder Sumi slash (upper-right -> lower-left, NOT a symmetrical cap!)
+  patches.push({
+    sCenter: 0.332 + jitS(),
+    uCenter: mirror * 0.36 + jitU(),
+    sRadius: 0.042 + rand() * 0.004,
+    uRadius: 0.44 + rand() * 0.04,
+    warpFreq: 5.0 + rand() * 0.8,
+    warpAmp: 0.18,
+    phase: rand() * 100 + 11,
+    layer: 'sumi',
+  });
+  patches.push({
+    sCenter: 0.364 + jitS(),
+    uCenter: -mirror * 0.06 + jitU(),
+    sRadius: 0.036 + rand() * 0.004,
+    uRadius: 0.36 + rand() * 0.04,
+    warpFreq: 5.4 + rand() * 0.8,
+    warpAmp: 0.18,
+    phase: rand() * 100 + 17,
+    layer: 'sumi',
+  });
+  patches.push({
+    sCenter: 0.396 + jitS(),
+    uCenter: -mirror * 0.40 + jitU(),
+    sRadius: 0.036 + rand() * 0.004,
+    uRadius: 0.36 + rand() * 0.04,
+    warpFreq: 5.6 + rand() * 0.8,
+    warpAmp: 0.18,
+    phase: rand() * 100 + 23,
+    layer: 'sumi',
+  });
 
-    for (let i = 0; i < numSteps; i++) {
-      const sCenter = spanStart + stepLen * (i + 0.45) + (rand() - 0.5) * 0.04;
-      const uCenter = (rand() - 0.5) * 0.42;
-      const sRadius = stepLen * (0.44 + rand() * 0.16);
-      const uRadius = 0.65 + rand() * 0.35;
-      patches.push({
-        sCenter,
-        uCenter,
-        sRadius,
-        uRadius,
-        warpFreq: 5.5 + rand() * 3.0,
-        warpAmp: 0.22 + rand() * 0.1,
-        phase: rand() * 100,
-        layer: 'hi'
-      });
-    }
-  } else if (variety === 'sanke') {
-    const numHi = 2 + (rand() > 0.4 ? 1 : 0);
-    for (let i = 0; i < numHi; i++) {
-      const sCenter = 0.1 + i * 0.27 + (rand() - 0.5) * 0.05;
-      const uCenter = (rand() - 0.5) * 0.45;
-      patches.push({
-        sCenter,
-        uCenter,
-        sRadius: 0.12 + rand() * 0.045,
-        uRadius: 0.62 + rand() * 0.32,
-        warpFreq: 6.0 + rand() * 2.5,
-        warpAmp: 0.24,
-        phase: rand() * 100,
-        layer: 'hi'
-      });
-    }
+  // 3. Large prominent right-flank vermilion Hi saddle + offset smaller left-mid Hi accent
+  patches.push({
+    sCenter: 0.440 + jitS(),
+    uCenter: mirror * 0.38 + jitU(),
+    sRadius: 0.072 + rand() * 0.006,
+    uRadius: 0.48 + rand() * 0.04,
+    warpFreq: 4.8 + rand() * 0.8,
+    warpAmp: 0.16,
+    phase: rand() * 100 + 37,
+    layer: 'hi',
+  });
+  patches.push({
+    sCenter: 0.482 + jitS(),
+    uCenter: -mirror * 0.32 + jitU(),
+    sRadius: 0.042 + rand() * 0.005,
+    uRadius: 0.34 + rand() * 0.04,
+    warpFreq: 5.8 + rand() * 0.8,
+    warpAmp: 0.16,
+    phase: rand() * 100 + 51,
+    layer: 'hi',
+  });
 
-    const numSumi = 4 + Math.floor(rand() * 2);
-    for (let i = 0; i < numSumi; i++) {
-      const sCenter = 0.22 + i * 0.14 + (rand() - 0.5) * 0.04;
-      const side = (i % 2 === 0 ? 1 : -1) * (0.18 + rand() * 0.35);
-      patches.push({
-        sCenter,
-        uCenter: side,
-        sRadius: 0.052 + rand() * 0.025,
-        uRadius: 0.36 + rand() * 0.18,
-        warpFreq: 8.0 + rand() * 3.0,
-        warpAmp: 0.2,
-        phase: rand() * 100 + 50,
-        layer: 'sumi'
-      });
-    }
-  } else if (variety === 'showa') {
-    baseRgb = [...sumiRgb];
-    hasMotoguro = true;
+  // 4. Bold diagonal lower-left Sumi mass sweeping cleanly across spine
+  patches.push({
+    sCenter: 0.556 + jitS(),
+    uCenter: -mirror * 0.24 + jitU(),
+    sRadius: 0.064 + rand() * 0.006,
+    uRadius: 0.50 + rand() * 0.04,
+    warpFreq: 5.2 + rand() * 0.8,
+    warpAmp: 0.20,
+    phase: rand() * 100 + 67,
+    layer: 'sumi',
+  });
 
-    const shiroPositions = [0.22 + (rand() - 0.5) * 0.04, 0.52 + (rand() - 0.5) * 0.05, 0.75];
-    for (const sc of shiroPositions) {
-      patches.push({
-        sCenter: sc,
-        uCenter: (rand() - 0.5) * 0.38,
-        sRadius: 0.095 + rand() * 0.035,
-        uRadius: 0.76 + rand() * 0.28,
-        warpFreq: 6.2 + rand() * 2.0,
-        warpAmp: 0.24,
-        phase: rand() * 100,
-        layer: 'shiro'
-      });
-    }
+  // 5. Prominent lower-right vermilion Hi saddle
+  patches.push({
+    sCenter: 0.646 + jitS(),
+    uCenter: mirror * 0.24 + jitU(),
+    sRadius: 0.064 + rand() * 0.006,
+    uRadius: 0.50 + rand() * 0.04,
+    warpFreq: 5.0 + rand() * 0.8,
+    warpAmp: 0.16,
+    phase: rand() * 100 + 91,
+    layer: 'hi',
+  });
 
-    const hiPositions = [0.09 + rand() * 0.03, 0.37 + (rand() - 0.5) * 0.04, 0.64 + (rand() - 0.5) * 0.04];
-    for (const sc of hiPositions) {
-      patches.push({
-        sCenter: sc,
-        uCenter: (rand() - 0.5) * 0.36,
-        sRadius: 0.105 + rand() * 0.03,
-        uRadius: 0.68 + rand() * 0.28,
-        warpFreq: 5.8 + rand() * 2.5,
-        warpAmp: 0.22,
-        phase: rand() * 100 + 33,
-        layer: 'hi'
-      });
-    }
-  }
+  // 6. Compact lower-right Sumi accent below the Hi saddle
+  patches.push({
+    sCenter: 0.712 + jitS() * 0.5,
+    uCenter: mirror * 0.28 + jitU(),
+    sRadius: 0.036 + rand() * 0.005,
+    uRadius: 0.36 + rand() * 0.04,
+    warpFreq: 5.8 + rand() * 0.8,
+    warpAmp: 0.16,
+    phase: rand() * 100 + 107,
+    layer: 'sumi',
+  });
+
+  // 7. Tail-base vermilion Hi accent near peduncle
+  patches.push({
+    sCenter: 0.780 + jitS() * 0.5,
+    uCenter: -mirror * 0.10 + jitU(),
+    sRadius: 0.046 + rand() * 0.005,
+    uRadius: 0.48 + rand() * 0.04,
+    warpFreq: 5.6 + rand() * 0.8,
+    warpAmp: 0.15,
+    phase: rand() * 100 + 123,
+    layer: 'hi',
+  });
 
   return {
     patches,
@@ -181,15 +207,15 @@ export function generateVarietyPatchesAndColors(
       shiroRgb,
       finHex: `rgb(${finRgb[0]},${finRgb[1]},${finRgb[2]})`,
       finRgb,
-      hasMotoguro
-    }
+      hasMotoguro: false,
+    },
   };
 }
 
 export interface KoiSurfaceEvaluation {
   rgb: [number, number, number];
   cssColor: string;
-  /** Density bias in [-0.25, +0.28] so markings are also legible in the ASCII density ramp */
+  /** Density bias in [-0.25, +0.28] so markings are also legible across lighting and pigment layers */
   densityBias: number;
   /** True if this cell lands on a subtle scale crescent rim */
   isScaleRim: boolean;

@@ -26,6 +26,7 @@ import {
   RED_CARD_TEXTURE_URI,
   WB_MAP_URI,
 } from "./columnArtData";
+import { KANJI_BRUTALIST_BOLD_B64, KANJI_BRUTALIST_REGULAR_B64 } from "../kanjiFontData";
 import { clamp, smoothstep } from "../math";
 import {
   COLUMN_TEXT_FADE_SECONDS,
@@ -495,16 +496,36 @@ export class BrutalistPortfolioUI {
     style.id = STYLE_ELEMENT_ID;
     style.textContent = `
 
-      @import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,600;1,700&family=EB+Garamond:ital,wght@0,500;0,600;0,700;0,800;1,500;1,600;1,700&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Noto+Serif+JP:wght@500;600;700;900&display=swap");
+      @import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=EB+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Noto+Serif+JP:wght@400;500;600;700&display=swap");
+
+      @font-face {
+        font-family: "KanjiBrutalist";
+        src:
+          url("data:font/ttf;base64,${KANJI_BRUTALIST_REGULAR_B64}") format("truetype"),
+          url("./fonts/KanjiBrutalist-Regular.ttf") format("truetype");
+        font-weight: 400;
+        font-style: normal;
+        font-display: block;
+      }
+
+      @font-face {
+        font-family: "KanjiBrutalist";
+        src:
+          url("data:font/ttf;base64,${KANJI_BRUTALIST_BOLD_B64}") format("truetype"),
+          url("./fonts/KanjiBrutalist-Bold.ttf") format("truetype");
+        font-weight: 700;
+        font-style: normal;
+        font-display: block;
+      }
 
       #layer-koi .bp-portfolio-root {
-        --bp-heading: "Cormorant Garamond", "Noto Serif JP", serif;
-        --bp-subject: "EB Garamond", "Noto Serif JP", serif;
+        --bp-heading: "Cormorant Garamond", "Noto Serif JP", Georgia, serif;
+        --bp-subject: "EB Garamond", "Noto Serif JP", Georgia, serif;
         --bp-body: "Libre Baskerville", "Noto Serif JP", Georgia, serif;
-        --bp-label: "Cormorant Garamond", "Noto Serif JP", serif;
-        --bp-kanji: "Noto Serif JP", "Cormorant Garamond", serif;
+        --bp-jp: "Noto Serif JP", "Cormorant Garamond", Georgia, serif;
+        --bp-kanji: var(--bp-heading);
         --bp-serif: var(--bp-body);
-        --bp-sans: "Geist Mono", system-ui, -apple-system, sans-serif;
+        --bp-sans: var(--bp-body);
 
         
         --bp-gold-foil: linear-gradient(
@@ -710,7 +731,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-shrunk-spine-seal {
-        font-family: var(--bp-kanji);
+        font-family: var(--bp-jp);
         font-size: 10.5px;
         font-weight: 700;
         line-height: 1;
@@ -819,7 +840,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-folio-seal {
-        font-family: var(--bp-label);
+        font-family: var(--bp-jp);
         font-size: 11px;
         padding: 1px 5px;
         border: 1px solid var(--bp-gold-rule-strong);
@@ -834,7 +855,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-folio-numeral {
-        font-family: var(--bp-label);
+        font-family: var(--bp-kanji);
         font-size: 10px;
         font-weight: 700;
         letter-spacing: 0.14em;
@@ -860,7 +881,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-col-title {
-        font-family: var(--bp-heading);
+        font-family: var(--bp-kanji);
         font-size: clamp(14.5px, 1.95vh, 19.5px);
         font-weight: 700;
         letter-spacing: 0.06em;
@@ -935,7 +956,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-folio-band-code {
-        font-family: var(--bp-label);
+        font-family: var(--bp-kanji);
         font-size: 11px;
         font-weight: 700;
         letter-spacing: 0.07em;
@@ -949,7 +970,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-col-subtitle {
-        font-family: var(--bp-label);
+        font-family: var(--bp-kanji);
         font-size: 8.2px;
         font-weight: 700;
         letter-spacing: 0.045em;
@@ -973,7 +994,7 @@ export class BrutalistPortfolioUI {
 
       #layer-koi .bp-expanded-title-sub {
         display: none;
-        font-family: var(--bp-serif);
+        font-family: var(--bp-heading);
         font-style: italic;
         font-size: 13px;
         color: var(--bp-open-muted);
@@ -1070,7 +1091,7 @@ export class BrutalistPortfolioUI {
         align-items: center;
         justify-content: space-between;
         gap: 6px;
-        font-family: var(--bp-label);
+        font-family: var(--bp-kanji);
         font-size: 10.5px;
         font-weight: 700;
         letter-spacing: 0.12em;
@@ -1146,7 +1167,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-vstack--subject .bp-vchar {
-        font-family: var(--bp-kanji);
+        font-family: var(--bp-subject);
         font-size: clamp(14.5px, 1.98vh, 20px);
         font-weight: 700;
         line-height: 1.04;
@@ -1206,7 +1227,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-identity-pin-code {
-        font-family: var(--bp-label);
+        font-family: var(--bp-kanji);
         font-size: 13px;
         font-weight: 700;
         letter-spacing: 0.08em;
@@ -1253,7 +1274,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-subject-role {
-        font-family: var(--bp-subject);
+        font-family: var(--bp-serif);
         font-style: italic;
         font-size: 12px;
         color: var(--bp-gold-muted);
@@ -1288,7 +1309,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-location-city {
-        font-family: var(--bp-label);
+        font-family: var(--bp-subject);
         font-weight: 700;
         letter-spacing: 0.04em;
         color: var(--bp-gold-solid);
@@ -1316,7 +1337,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-primary-value {
-        font-family: var(--bp-label);
+        font-family: var(--bp-subject);
         font-size: 15px;
         font-weight: 700;
         letter-spacing: 0.06em;
@@ -1353,7 +1374,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-age-num {
-        font-family: var(--bp-label);
+        font-family: var(--bp-subject);
         font-size: clamp(20px, 1.7vw, 26px);
         font-weight: 700;
         line-height: 1.1;
@@ -1371,7 +1392,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-age-unit {
-        font-family: var(--bp-label);
+        font-family: var(--bp-kanji);
         font-size: 9.5px;
         letter-spacing: 0.1em;
         text-transform: uppercase;
@@ -1398,7 +1419,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-contact-label {
-        font-family: var(--bp-label);
+        font-family: var(--bp-kanji);
         font-size: 9.5px;
         font-weight: 700;
         letter-spacing: 0.1em;
@@ -1415,14 +1436,14 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-exp-role {
-        font-family: var(--bp-subject);
+        font-family: var(--bp-kanji);
         font-size: 15px;
         font-weight: 700;
         color: var(--bp-open-fg);
       }
 
       #layer-koi .bp-exp-grade {
-        font-family: var(--bp-label);
+        font-family: var(--bp-kanji);
         font-size: 10px;
         letter-spacing: 0.08em;
         color: var(--bp-open-accent);
@@ -1450,7 +1471,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-edu-idx {
-        font-family: var(--bp-label);
+        font-family: var(--bp-kanji);
         font-size: 10px;
         font-weight: 700;
         letter-spacing: 0.08em;
@@ -1464,7 +1485,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-edu-date {
-        font-family: var(--bp-label);
+        font-family: var(--bp-kanji);
         font-size: 9.5px;
         font-weight: 700;
         letter-spacing: 0.08em;
@@ -1485,7 +1506,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-edu-school {
-        font-family: var(--bp-subject);
+        font-family: var(--bp-kanji);
         font-size: 13.8px;
         font-weight: 700;
         letter-spacing: 0.02em;
@@ -1541,7 +1562,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-skill-cat {
-        font-family: var(--bp-heading);
+        font-family: var(--bp-kanji);
         font-size: 14px;
         font-weight: 700;
         letter-spacing: 0.05em;
@@ -1561,7 +1582,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-skill-idx {
-        font-family: var(--bp-label);
+        font-family: var(--bp-kanji);
         font-size: 10px;
         font-weight: 700;
         letter-spacing: 0.08em;
@@ -1598,7 +1619,7 @@ export class BrutalistPortfolioUI {
 
       #layer-koi .bp-skill-tag,
       #layer-koi .bp-project-tag {
-        font-family: var(--bp-label);
+        font-family: var(--bp-kanji);
         font-size: 9.5px;
         letter-spacing: 0.06em;
         padding: 1px 6px;
@@ -1621,7 +1642,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-project-idx-pill {
-        font-family: var(--bp-label);
+        font-family: var(--bp-kanji);
         font-size: 10.5px;
         font-weight: 700;
         letter-spacing: 0.06em;
@@ -1640,7 +1661,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-project-badge {
-        font-family: var(--bp-label);
+        font-family: var(--bp-kanji);
         font-size: 8.5px;
         font-weight: 700;
         letter-spacing: 0.06em;
@@ -1656,7 +1677,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-project-title {
-        font-family: var(--bp-subject);
+        font-family: var(--bp-kanji);
         font-size: 13.6px;
         font-weight: 700;
         letter-spacing: 0.02em;
@@ -1714,7 +1735,7 @@ export class BrutalistPortfolioUI {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        font-family: var(--bp-label);
+        font-family: var(--bp-kanji);
         font-size: 10px;
         font-weight: 700;
         letter-spacing: 0.12em;
@@ -1786,7 +1807,7 @@ export class BrutalistPortfolioUI {
       }
 
       #layer-koi .bp-col:not(.bp-col--is-expanded) .bp-folio-seal {
-        font-family: var(--bp-kanji);
+        font-family: var(--bp-jp);
         font-size: clamp(38px, 5.2vh, 62px);
         line-height: 1;
         width: clamp(64px, 8.4vh, 96px);
