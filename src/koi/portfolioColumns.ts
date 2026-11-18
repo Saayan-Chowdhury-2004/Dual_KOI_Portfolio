@@ -26,7 +26,6 @@ import {
   RED_CARD_TEXTURE_URI,
   WB_MAP_URI,
 } from "./columnArtData";
-import { KANJI_BRUTALIST_BOLD_B64, KANJI_BRUTALIST_REGULAR_B64 } from "../kanjiFontData";
 import { clamp, smoothstep } from "../math";
 import {
   COLUMN_TEXT_FADE_SECONDS,
@@ -496,28 +495,10 @@ export class BrutalistPortfolioUI {
     style.id = STYLE_ELEMENT_ID;
     style.textContent = `
 
-      @font-face {
-        font-family: "KanjiBrutalist";
-        src:
-          url("data:font/ttf;base64,${KANJI_BRUTALIST_REGULAR_B64}") format("truetype"),
-          url("./fonts/KanjiBrutalist-Regular.ttf") format("truetype");
-        font-weight: 400;
-        font-style: normal;
-        font-display: block;
-      }
-
-      @font-face {
-        font-family: "KanjiBrutalist";
-        src:
-          url("data:font/ttf;base64,${KANJI_BRUTALIST_BOLD_B64}") format("truetype"),
-          url("./fonts/KanjiBrutalist-Bold.ttf") format("truetype");
-        font-weight: 700;
-        font-style: normal;
-        font-display: block;
-      }
+      @import url("https://fonts.googleapis.com/css2?family=Shojumaru&display=swap");
 
       #layer-koi .bp-portfolio-root {
-        --bp-kanji: "KanjiBrutalist", Georgia, serif;
+        --bp-kanji: "Shojumaru", Georgia, serif;
         --bp-serif: Georgia, "Times New Roman", serif;
         --bp-sans: "Geist Mono", system-ui, -apple-system, sans-serif;
 
