@@ -495,10 +495,10 @@ export class BrutalistPortfolioUI {
     style.id = STYLE_ELEMENT_ID;
     style.textContent = `
 
-      @import url("https://fonts.googleapis.com/css2?family=Shojumaru&display=swap");
+      @import url("https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700;800&family=Shippori+Mincho+B1:wght@500;700;800&display=swap");
 
       #layer-koi .bp-portfolio-root {
-        --bp-kanji: "Shojumaru", Georgia, serif;
+        --bp-kanji: "Shippori Mincho", "Shippori Mincho B1", Georgia, serif;
         --bp-serif: Georgia, "Times New Roman", serif;
         --bp-sans: "Geist Mono", system-ui, -apple-system, sans-serif;
 

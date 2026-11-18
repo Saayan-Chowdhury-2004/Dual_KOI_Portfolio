@@ -82,7 +82,7 @@ function mixRgb(
 }
 
 export class AsciiKoiPondRenderer {
-  private fontFamily = '"Shojumaru", Georgia, "Times New Roman", serif';
+  private fontFamily = '"Shippori Mincho", "Shippori Mincho B1", Georgia, "Times New Roman", serif';
   private configuredTheme: PondThemeName = "light-pond";
   private currentPalette: PondPalette = POND_PALETTES["light-pond"];
   private previousPalette: PondPalette | null = null;
@@ -371,7 +371,7 @@ export class AsciiKoiPondRenderer {
 
   public setFontFamily(family: string): void {
     if (family && family !== this.fontFamily) {
-      this.fontFamily = `"Shojumaru", ${family}`;
+      this.fontFamily = `"Shippori Mincho", ${family}`;
     }
   }
 
