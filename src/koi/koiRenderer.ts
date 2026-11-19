@@ -317,6 +317,7 @@ export class KoiPondRenderer {
   private portraitRealLoaded = false;
   private portraitRealBwCanvas: HTMLCanvasElement | null = null;
   private portraitPhotoRevealed = false;
+  private portraitGlazeDismissed = false;
   private portraitTransFromKind: "default" | "ink" | "real" = "default";
   private portraitTransToKind: "default" | "ink" | "real" = "real";
   private portraitTransCanvas: HTMLCanvasElement | null = null;
@@ -483,6 +484,7 @@ export class KoiPondRenderer {
     }
     const fromKind = this.getTargetPortraitKind();
     this.portraitPhotoRevealed = !this.portraitPhotoRevealed;
+    this.portraitGlazeDismissed = true;
     const toKind = this.getTargetPortraitKind();
     this.portraitTransFromKind = fromKind;
     this.portraitTransToKind = toKind;
@@ -998,6 +1000,7 @@ export class KoiPondRenderer {
     this.flashlightDispersal = other.flashlightDispersal;
     this.flashlightEnabled = other.flashlightEnabled;
     this.hasAutoActivatedFlashlightOnce = other.hasAutoActivatedFlashlightOnce;
+    this.portraitGlazeDismissed = other.portraitGlazeDismissed;
     this.rawPointerX = other.rawPointerX;
     this.rawPointerY = other.rawPointerY;
     this.rawPointerActive = other.rawPointerActive;
@@ -1158,6 +1161,46 @@ export class KoiPondRenderer {
       this.transitioning = true;
       this.themeProgress = 0;
     }
+  }
+
+  /**
+   * Smoothly transitions the pond from its current time-of-day hour to a specific target hour
+   * (used when cycling the lighting toggle back to live System Time).
+   */
+  public transitionToTimeOfDayHours(targetHours: number, immediate = false): void {
+    const nextHours = KoiPondRenderer.normalizeHours(targetHours);
+    if (immediate) {
+      this.setTimeOfDayHours(nextHours, true);
+      return;
+    }
+
+    const currentlyLight = this.isLightMode;
+    const nextNight = KoiPondRenderer.isNightLampTime(nextHours);
+    const nextLight = !nextNight;
+    const startHours = this.timeOfDayHours;
+
+    this.sunCycleTargetLight = nextLight;
+    this.previousPalette = POND_PALETTES[currentlyLight ? "light-pond" : "black-pond"];
+    this.configuredTheme = nextLight ? "light-pond" : "black-pond";
+    this.currentPalette = POND_PALETTES[this.configuredTheme];
+
+    if (nextNight) {
+      this.darkModeToggleAt = performance.now();
+      if (!this.hasAutoActivatedFlashlightOnce) {
+        this.flashlightEnabled = true;
+        this.hasAutoActivatedFlashlightOnce = true;
+      } else if (currentlyLight) {
+        this.flashlightEnabled = false;
+      }
+    } else {
+      this.darkModeToggleAt = -1;
+    }
+
+    this.sunCycleStartHour = startHours;
+    this.sunCycleEndHour = nextHours;
+    this.themeTransitionStart = performance.now();
+    this.transitioning = true;
+    this.themeProgress = 0;
   }
 
   public toggleTheme(): boolean {
@@ -4816,110 +4859,338 @@ export class KoiPondRenderer {
       ctx.restore();
     }
 
-    // === 2. PELVIC FINS (asymmetrically flared pointed ink-rooted brushes in S2; soft teardrops in S1) ===
-    const pelS0 = isSumie ? 0.48 : 0.51;
-    const pelS1 = isSumie ? 0.58 : 0.59;
-    const pelLead = this.sampleSpineFrame(fish, pelS0);
-    const pelTrail = this.sampleSpineFrame(fish, pelS1);
-    const pelHw0 = koiBodyHalfWidth(pelS0, fish.maxHalfWidth);
-    const pelHw1 = koiBodyHalfWidth(pelS1, fish.maxHalfWidth);
+    if (isSumie) {
+      // === 2. PELVIC FINS (Sumi-e: untouched asymmetrically flared pointed ink-rooted brushes) ===
+      const pelS0 = 0.48;
+      const pelS1 = 0.58;
+      const pelLead = this.sampleSpineFrame(fish, pelS0);
+      const pelTrail = this.sampleSpineFrame(fish, pelS1);
+      const pelHw0 = koiBodyHalfWidth(pelS0, fish.maxHalfWidth);
+      const pelHw1 = koiBodyHalfWidth(pelS1, fish.maxHalfWidth);
 
-    for (const side of [-1, 1] as const) {
-      const asym = isSumie && side < 0 ? 1.28 : 0.88;
-      const pelSpan = fish.maxHalfWidth * (isSumie ? 0.36 * asym : 0.21);
-      const r0x = pelLead.x + pelLead.nx * (side * pelHw0 * 0.86);
-      const r0y = pelLead.y + pelLead.ny * (side * pelHw0 * 0.86);
-      const r1x = pelTrail.x + pelTrail.nx * (side * pelHw1 * 0.84);
-      const r1y = pelTrail.y + pelTrail.ny * (side * pelHw1 * 0.84);
-      const tipX = r1x + pelTrail.nx * (side * pelSpan * 0.90) - pelTrail.tx * (pelSpan * (isSumie ? 1.15 : 0.74));
-      const tipY = r1y + pelTrail.ny * (side * pelSpan * 0.90) - pelTrail.ty * (pelSpan * (isSumie ? 1.15 : 0.74));
+      for (const side of [-1, 1] as const) {
+        const asym = side < 0 ? 1.28 : 0.88;
+        const pelSpan = fish.maxHalfWidth * 0.36 * asym;
+        const r0x = pelLead.x + pelLead.nx * (side * pelHw0 * 0.86);
+        const r0y = pelLead.y + pelLead.ny * (side * pelHw0 * 0.86);
+        const r1x = pelTrail.x + pelTrail.nx * (side * pelHw1 * 0.84);
+        const r1y = pelTrail.y + pelTrail.ny * (side * pelHw1 * 0.84);
+        const tipX = r1x + pelTrail.nx * (side * pelSpan * 0.90) - pelTrail.tx * (pelSpan * 1.15);
+        const tipY = r1y + pelTrail.ny * (side * pelSpan * 0.90) - pelTrail.ty * (pelSpan * 1.15);
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(r0x, r0y);
+        ctx.bezierCurveTo(
+          r0x + pelLead.nx * (side * pelSpan * 1.18) - pelLead.tx * (pelSpan * 0.04),
+          r0y + pelLead.ny * (side * pelSpan * 1.18) - pelLead.ty * (pelSpan * 0.04),
+          tipX + pelTrail.nx * (side * pelSpan * 0.42) + pelTrail.tx * (pelSpan * 0.44),
+          tipY + pelTrail.ny * (side * pelSpan * 0.42) + pelTrail.ty * (pelSpan * 0.44),
+          tipX,
+          tipY
+        );
+        ctx.bezierCurveTo(
+          tipX - pelTrail.nx * (side * pelSpan * 0.14) + pelTrail.tx * (pelSpan * 0.30),
+          tipY - pelTrail.ny * (side * pelSpan * 0.14) + pelTrail.ty * (pelSpan * 0.30),
+          r1x + pelTrail.nx * (side * pelSpan * 0.28) - pelTrail.tx * (pelSpan * 0.36),
+          r1y + pelTrail.ny * (side * pelSpan * 0.28) - pelTrail.ty * (pelSpan * 0.36),
+          r1x,
+          r1y
+        );
+        ctx.closePath();
+
+        const pg = ctx.createLinearGradient(r0x, r0y, tipX, tipY);
+        pg.addColorStop(0.0, rgbToRgba(nightTint([24, 22, 22]), 0.94));
+        pg.addColorStop(0.45, rgbToRgba(ivoryTip, 0.96));
+        pg.addColorStop(1.0, rgbToRgba(ivoryTip, 0.98));
+        ctx.fillStyle = pg;
+        ctx.fill();
+
+        for (let k = 1; k <= 4; k++) {
+          const f = k / 5;
+          const sx = r0x + (r1x - r0x) * f;
+          const sy = r0y + (r1y - r0y) * f;
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.quadraticCurveTo(
+            sx + pelLead.nx * (side * pelSpan * 0.48),
+            sy + pelLead.ny * (side * pelSpan * 0.48),
+            sx + (tipX - r0x) * (0.70 - f * 0.18),
+            sy + (tipY - r0y) * (0.70 - f * 0.18)
+          );
+          ctx.strokeStyle = rayCol;
+          ctx.lineWidth = Math.max(0.65, fish.maxHalfWidth * 0.009);
+          ctx.stroke();
+        }
+        ctx.strokeStyle = finStroke;
+        ctx.lineWidth = finOutlineW * 0.56;
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // === 3. SINGLE TUCKED ANAL FIN (Sumi-e: untouched) ===
+      const analSide: -1 | 1 = -1;
+      const aLead = this.sampleSpineFrame(fish, 0.685);
+      const aTrail = this.sampleSpineFrame(fish, 0.748);
+      const aHw0 = koiBodyHalfWidth(0.685, fish.maxHalfWidth);
+      const aHw1 = koiBodyHalfWidth(0.748, fish.maxHalfWidth);
+      const aSpan = fish.maxHalfWidth * 0.24;
+      const ar0x = aLead.x + aLead.nx * (analSide * aHw0 * 0.84);
+      const ar0y = aLead.y + aLead.ny * (analSide * aHw0 * 0.84);
+      const ar1x = aTrail.x + aTrail.nx * (analSide * aHw1 * 0.84);
+      const ar1y = aTrail.y + aTrail.ny * (analSide * aHw1 * 0.84);
+      const aTipX = ar1x + aTrail.nx * (analSide * aSpan * 0.86) - aTrail.tx * (aSpan * 1.10);
+      const aTipY = ar1y + aTrail.ny * (analSide * aSpan * 0.86) - aTrail.ty * (aSpan * 1.10);
 
       ctx.save();
       ctx.beginPath();
-      ctx.moveTo(r0x, r0y);
-      ctx.bezierCurveTo(
-        r0x + pelLead.nx * (side * pelSpan * 1.18) - pelLead.tx * (pelSpan * 0.04),
-        r0y + pelLead.ny * (side * pelSpan * 1.18) - pelLead.ty * (pelSpan * 0.04),
-        tipX + pelTrail.nx * (side * pelSpan * 0.42) + pelTrail.tx * (pelSpan * 0.44),
-        tipY + pelTrail.ny * (side * pelSpan * 0.42) + pelTrail.ty * (pelSpan * 0.44),
-        tipX,
-        tipY
+      ctx.moveTo(ar0x, ar0y);
+      ctx.quadraticCurveTo(
+        ar0x + aLead.nx * (analSide * aSpan * 1.06) - aLead.tx * (aSpan * 0.18),
+        ar0y + aLead.ny * (analSide * aSpan * 1.06) - aLead.ty * (aSpan * 0.18),
+        aTipX,
+        aTipY
       );
-      ctx.bezierCurveTo(
-        tipX - pelTrail.nx * (side * pelSpan * 0.14) + pelTrail.tx * (pelSpan * 0.30),
-        tipY - pelTrail.ny * (side * pelSpan * 0.14) + pelTrail.ty * (pelSpan * 0.30),
-        r1x + pelTrail.nx * (side * pelSpan * 0.28) - pelTrail.tx * (pelSpan * 0.36),
-        r1y + pelTrail.ny * (side * pelSpan * 0.28) - pelTrail.ty * (pelSpan * 0.36),
-        r1x,
-        r1y
+      ctx.quadraticCurveTo(
+        ar1x + aTrail.nx * (analSide * aSpan * 0.28) - aTrail.tx * (aSpan * 0.42),
+        ar1y + aTrail.ny * (analSide * aSpan * 0.28) - aTrail.ty * (aSpan * 0.42),
+        ar1x,
+        ar1y
       );
       ctx.closePath();
+      ctx.fillStyle = rgbToRgba(ivoryTip, 0.94);
+      ctx.fill();
+      ctx.strokeStyle = finStroke;
+      ctx.lineWidth = finOutlineW * 0.56;
+      ctx.stroke();
+      ctx.restore();
+    } else {
+      // === 2. MOKKOTSU PELVIC FINS (compact, tucked rounded petals matching reference koi anatomy) ===
+      const pelS0 = 0.605;
+      const pelS1 = 0.692;
+      const pelLead = this.sampleSpineFrame(fish, pelS0);
+      const pelTrail = this.sampleSpineFrame(fish, pelS1);
+      const pelHw0 = koiBodyHalfWidth(pelS0, fish.maxHalfWidth);
+      const pelHw1 = koiBodyHalfWidth(pelS1, fish.maxHalfWidth);
+      const pelSway = Math.sin(fish.phase * 0.85 - 1.1) * 0.03;
 
-      const pg = ctx.createLinearGradient(r0x, r0y, tipX, tipY);
-      pg.addColorStop(0.0, rgbToRgba(isSumie ? nightTint([24, 22, 22]) : warmBase, 0.94));
-      pg.addColorStop(0.45, rgbToRgba(ivoryTip, 0.96));
-      pg.addColorStop(1.0, rgbToRgba(ivoryTip, 0.98));
-      ctx.fillStyle = pg;
+      for (const side of [-1, 1] as const) {
+        const pelSpan = fish.maxHalfWidth * 0.242 * fish.finSpanFactor;
+        const r0x = pelLead.x + pelLead.nx * (side * pelHw0 * 0.82);
+        const r0y = pelLead.y + pelLead.ny * (side * pelHw0 * 0.82);
+        const r1x = pelTrail.x + pelTrail.nx * (side * pelHw1 * 0.78);
+        const r1y = pelTrail.y + pelTrail.ny * (side * pelHw1 * 0.78);
+
+        // Gently tucked backward petal direction along the tapering flank
+        const outNx = pelTrail.nx * side;
+        const outNy = pelTrail.ny * side;
+        const backTx = -pelTrail.tx;
+        const backTy = -pelTrail.ty;
+        const leadNx = pelLead.nx * side;
+        const leadNy = pelLead.ny * side;
+        const leadBackTx = -pelLead.tx;
+        const leadBackTy = -pelLead.ty;
+
+        // Smooth rounded petal apex (tucked close to the flank, swept posteriorly)
+        const apexX =
+          r1x +
+          outNx * (pelSpan * (0.98 + pelSway * side)) +
+          backTx * (pelSpan * 0.72);
+        const apexY =
+          r1y +
+          outNy * (pelSpan * (0.98 + pelSway * side)) +
+          backTy * (pelSpan * 0.72);
+
+        const tracePelvic = () => {
+          ctx.beginPath();
+          ctx.moveTo(r0x, r0y);
+          // Outer convex leading edge: emerges cleanly from under flank and sweeps smoothly back
+          ctx.bezierCurveTo(
+            r0x + leadNx * (pelSpan * 0.78) + leadBackTx * (pelSpan * 0.36),
+            r0y + leadNy * (pelSpan * 0.78) + leadBackTy * (pelSpan * 0.36),
+            apexX + outNx * (pelSpan * 0.34) - backTx * (pelSpan * 0.52),
+            apexY + outNy * (pelSpan * 0.34) - backTy * (pelSpan * 0.52),
+            apexX,
+            apexY
+          );
+          // Soft C1-rounded posterior petal lobe tucking smoothly back into the flank
+          ctx.bezierCurveTo(
+            apexX - outNx * (pelSpan * 0.30) + backTx * (pelSpan * 0.32),
+            apexY - outNy * (pelSpan * 0.30) + backTy * (pelSpan * 0.32),
+            r1x + outNx * (pelSpan * 0.24) + backTx * (pelSpan * 0.44),
+            r1y + outNy * (pelSpan * 0.24) + backTy * (pelSpan * 0.44),
+            r1x,
+            r1y
+          );
+          ctx.closePath();
+        };
+
+        ctx.save();
+        tracePelvic();
+        const pg = ctx.createLinearGradient(
+          (r0x + r1x) * 0.5,
+          (r0y + r1y) * 0.5,
+          apexX + outNx * (pelSpan * 0.15),
+          apexY + outNy * (pelSpan * 0.15)
+        );
+        pg.addColorStop(0.0, rgbToRgba(warmBase, 0.94));
+        pg.addColorStop(0.42, rgbToRgba(darkenRgb(warmBase, 1.09), 0.94));
+        pg.addColorStop(0.84, rgbToRgba(ivoryTip, 0.96));
+        pg.addColorStop(1.0, rgbToRgba(ivoryTip, 0.98));
+        ctx.fillStyle = pg;
+        ctx.fill();
+
+        // Clipped curved radiating fin rays matching the pectoral fin craftsmanship
+        ctx.save();
+        tracePelvic();
+        ctx.clip();
+        const pelRayCount = 5;
+        for (let r = 0; r < pelRayCount; r++) {
+          const frac = (r + 0.5) / pelRayCount;
+          // Fan gently from anterior-mid root along the swept petal toward the rounded trailing lobe
+          const sx = r0x + (r1x - r0x) * (0.08 + frac * 0.48);
+          const sy = r0y + (r1y - r0y) * (0.08 + frac * 0.48);
+          const ex =
+            apexX -
+            outNx * (pelSpan * (0.48 - frac * 0.62)) -
+            backTx * (pelSpan * (0.58 - frac * 0.54));
+          const ey =
+            apexY -
+            outNy * (pelSpan * (0.48 - frac * 0.62)) -
+            backTy * (pelSpan * (0.58 - frac * 0.54));
+          const cx =
+            (sx + ex) * 0.5 +
+            outNx * (pelSpan * (0.28 - frac * 0.12)) +
+            backTx * (pelSpan * 0.08);
+          const cy =
+            (sy + ey) * 0.5 +
+            outNy * (pelSpan * (0.28 - frac * 0.12)) +
+            backTy * (pelSpan * 0.08);
+
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.quadraticCurveTo(cx, cy, ex, ey);
+          ctx.strokeStyle = rayCol;
+          ctx.lineWidth = Math.max(0.65, fish.maxHalfWidth * 0.0095);
+          ctx.stroke();
+        }
+        ctx.restore();
+
+        tracePelvic();
+        ctx.strokeStyle = finStroke;
+        ctx.lineWidth = finOutlineW * 0.86;
+        ctx.lineJoin = "round";
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // === 3. MOKKOTSU SINGLE TUCKED ANAL FIN (slender, rounded sickle petal along tail peduncle) ===
+      const analSide: -1 | 1 = -1;
+      const aLead = this.sampleSpineFrame(fish, 0.748);
+      const aTrail = this.sampleSpineFrame(fish, 0.822);
+      const aHw0 = koiBodyHalfWidth(0.748, fish.maxHalfWidth);
+      const aHw1 = koiBodyHalfWidth(0.822, fish.maxHalfWidth);
+      const aSpan = fish.maxHalfWidth * 0.172 * fish.finSpanFactor;
+
+      const ar0x = aLead.x + aLead.nx * (analSide * aHw0 * 0.80);
+      const ar0y = aLead.y + aLead.ny * (analSide * aHw0 * 0.80);
+      const ar1x = aTrail.x + aTrail.nx * (analSide * aHw1 * 0.76);
+      const ar1y = aTrail.y + aTrail.ny * (analSide * aHw1 * 0.76);
+
+      const aOutNx = aTrail.nx * analSide;
+      const aOutNy = aTrail.ny * analSide;
+      const aBackTx = -aTrail.tx;
+      const aBackTy = -aTrail.ty;
+      const aLeadNx = aLead.nx * analSide;
+      const aLeadNy = aLead.ny * analSide;
+      const aLeadBackTx = -aLead.tx;
+      const aLeadBackTy = -aLead.ty;
+
+      // Softly rounded apex tucked neatly along the lower peduncle
+      const aApexX = ar1x + aOutNx * (aSpan * 0.88) + aBackTx * (aSpan * 0.78);
+      const aApexY = ar1y + aOutNy * (aSpan * 0.88) + aBackTy * (aSpan * 0.78);
+
+      const traceAnal = () => {
+        ctx.beginPath();
+        ctx.moveTo(ar0x, ar0y);
+        // Smooth, slender convex outer edge curving gracefully along the peduncle
+        ctx.bezierCurveTo(
+          ar0x + aLeadNx * (aSpan * 0.74) + aLeadBackTx * (aSpan * 0.42),
+          ar0y + aLeadNy * (aSpan * 0.74) + aLeadBackTy * (aSpan * 0.42),
+          aApexX + aOutNx * (aSpan * 0.28) - aBackTx * (aSpan * 0.56),
+          aApexY + aOutNy * (aSpan * 0.28) - aBackTy * (aSpan * 0.56),
+          aApexX,
+          aApexY
+        );
+        // Smooth rounded trailing tip tucking cleanly back into the peduncle
+        ctx.bezierCurveTo(
+          aApexX - aOutNx * (aSpan * 0.28) + aBackTx * (aSpan * 0.28),
+          aApexY - aOutNy * (aSpan * 0.28) + aBackTy * (aSpan * 0.28),
+          ar1x + aOutNx * (aSpan * 0.18) + aBackTx * (aSpan * 0.40),
+          ar1y + aOutNy * (aSpan * 0.18) + aBackTy * (aSpan * 0.40),
+          ar1x,
+          ar1y
+        );
+        ctx.closePath();
+      };
+
+      ctx.save();
+      traceAnal();
+      const ag = ctx.createLinearGradient(
+        (ar0x + ar1x) * 0.5,
+        (ar0y + ar1y) * 0.5,
+        aApexX + aOutNx * (aSpan * 0.12),
+        aApexY + aOutNy * (aSpan * 0.12)
+      );
+      ag.addColorStop(0.0, rgbToRgba(warmBase, 0.94));
+      ag.addColorStop(0.45, rgbToRgba(darkenRgb(warmBase, 1.08), 0.94));
+      ag.addColorStop(0.85, rgbToRgba(ivoryTip, 0.96));
+      ag.addColorStop(1.0, rgbToRgba(ivoryTip, 0.98));
+      ctx.fillStyle = ag;
       ctx.fill();
 
-      for (let k = 1; k <= 4; k++) {
-        const f = k / 5;
-        const sx = r0x + (r1x - r0x) * f;
-        const sy = r0y + (r1y - r0y) * f;
+      // Clipped delicate fin rays inside the anal fin
+      ctx.save();
+      traceAnal();
+      ctx.clip();
+      const analRayCount = 4;
+      for (let r = 0; r < analRayCount; r++) {
+        const frac = (r + 0.5) / analRayCount;
+        const sx = ar0x + (ar1x - ar0x) * (0.10 + frac * 0.46);
+        const sy = ar0y + (ar1y - ar0y) * (0.10 + frac * 0.46);
+        const ex =
+          aApexX -
+          aOutNx * (aSpan * (0.44 - frac * 0.56)) -
+          aBackTx * (aSpan * (0.54 - frac * 0.50));
+        const ey =
+          aApexY -
+          aOutNy * (aSpan * (0.44 - frac * 0.56)) -
+          aBackTy * (aSpan * (0.54 - frac * 0.50));
+        const cx =
+          (sx + ex) * 0.5 +
+          aOutNx * (aSpan * (0.24 - frac * 0.10)) +
+          aBackTx * (aSpan * 0.06);
+        const cy =
+          (sy + ey) * 0.5 +
+          aOutNy * (aSpan * (0.24 - frac * 0.10)) +
+          aBackTy * (aSpan * 0.06);
+
         ctx.beginPath();
         ctx.moveTo(sx, sy);
-        ctx.quadraticCurveTo(
-          sx + pelLead.nx * (side * pelSpan * 0.48),
-          sy + pelLead.ny * (side * pelSpan * 0.48),
-          sx + (tipX - r0x) * (0.70 - f * 0.18),
-          sy + (tipY - r0y) * (0.70 - f * 0.18)
-        );
+        ctx.quadraticCurveTo(cx, cy, ex, ey);
         ctx.strokeStyle = rayCol;
-        ctx.lineWidth = Math.max(0.65, fish.maxHalfWidth * 0.009);
+        ctx.lineWidth = Math.max(0.6, fish.maxHalfWidth * 0.0085);
         ctx.stroke();
       }
+      ctx.restore();
+
+      traceAnal();
       ctx.strokeStyle = finStroke;
-      ctx.lineWidth = finOutlineW * (isSumie ? 0.56 : 0.78);
+      ctx.lineWidth = finOutlineW * 0.78;
+      ctx.lineJoin = "round";
       ctx.stroke();
       ctx.restore();
     }
-
-    // === 3. SINGLE TUCKED ANAL FIN (s = 0.685..0.748) ===
-    const analSide: -1 | 1 = -1;
-    const aLead = this.sampleSpineFrame(fish, 0.685);
-    const aTrail = this.sampleSpineFrame(fish, 0.748);
-    const aHw0 = koiBodyHalfWidth(0.685, fish.maxHalfWidth);
-    const aHw1 = koiBodyHalfWidth(0.748, fish.maxHalfWidth);
-    const aSpan = fish.maxHalfWidth * (isSumie ? 0.24 : 0.14);
-    const ar0x = aLead.x + aLead.nx * (analSide * aHw0 * 0.84);
-    const ar0y = aLead.y + aLead.ny * (analSide * aHw0 * 0.84);
-    const ar1x = aTrail.x + aTrail.nx * (analSide * aHw1 * 0.84);
-    const ar1y = aTrail.y + aTrail.ny * (analSide * aHw1 * 0.84);
-    const aTipX = ar1x + aTrail.nx * (analSide * aSpan * 0.86) - aTrail.tx * (aSpan * 1.10);
-    const aTipY = ar1y + aTrail.ny * (analSide * aSpan * 0.86) - aTrail.ty * (aSpan * 1.10);
-
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(ar0x, ar0y);
-    ctx.quadraticCurveTo(
-      ar0x + aLead.nx * (analSide * aSpan * 1.06) - aLead.tx * (aSpan * 0.18),
-      ar0y + aLead.ny * (analSide * aSpan * 1.06) - aLead.ty * (aSpan * 0.18),
-      aTipX,
-      aTipY
-    );
-    ctx.quadraticCurveTo(
-      ar1x + aTrail.nx * (analSide * aSpan * 0.28) - aTrail.tx * (aSpan * 0.42),
-      ar1y + aTrail.ny * (analSide * aSpan * 0.28) - aTrail.ty * (aSpan * 0.42),
-      ar1x,
-      ar1y
-    );
-    ctx.closePath();
-    ctx.fillStyle = rgbToRgba(ivoryTip, 0.94);
-    ctx.fill();
-    ctx.strokeStyle = finStroke;
-    ctx.lineWidth = finOutlineW * 0.56;
-    ctx.stroke();
-    ctx.restore();
   }
 
   private paintKoiCaudalFin(
@@ -5440,6 +5711,9 @@ export class KoiPondRenderer {
       if (targetImg) {
         this.drawFlushPortrait(ctx, targetImg, ix, iy, iw, ih);
       }
+      if (!this.portraitGlazeDismissed && !this.portraitPhotoRevealed) {
+        this.paintPortraitGoldenGlaze(ctx, ix, iy, iw, ih);
+      }
       ctx.restore();
       return;
     }
@@ -5601,6 +5875,168 @@ export class KoiPondRenderer {
         ih,
         p
       );
+    }
+
+    ctx.restore();
+  }
+
+  /**
+   * Paints a subtle, organic gold-leaf glaze sweeping from the bottom-right corner
+   * to the top-left corner of the portrait painting as a gentle visual cue to click.
+   * Uses layered feathered elliptical gold-leaf blooms, an S-curved warm specular wave,
+   * and delicate kinpaku shimmer motes (never a rigid diagonal rectangle).
+   */
+  private paintPortraitGoldenGlaze(
+    ctx: CanvasRenderingContext2D,
+    ix: number,
+    iy: number,
+    iw: number,
+    ih: number
+  ): void {
+    const nowSec = (typeof performance !== "undefined" ? performance.now() : Date.now()) * 0.001;
+    const cycleSec = 5.4;
+    const sweepSec = 2.05;
+    const phaseT = nowSec % cycleSec;
+    if (phaseT > sweepSec) return;
+
+    // Smooth ease-in-out sweep from 0 (bottom-right) to 1 (top-left)
+    const rawU = phaseT / sweepSec;
+    const u = rawU < 0.5
+      ? 2 * rawU * rawU
+      : 1 - Math.pow(-2 * rawU + 2, 2) / 2;
+
+    // Gentle organic envelope so the glaze blooms softly in and dissolves out
+    const env = Math.pow(Math.sin(Math.PI * rawU), 0.72);
+    if (env <= 0.004) return;
+
+    const diag = Math.hypot(iw, ih);
+    const invDiag = 1 / Math.max(1, diag);
+    // Direction vector from bottom-right -> top-left
+    const dirX = -iw * invDiag;
+    const dirY = -ih * invDiag;
+    // Perpendicular vector (runs along the glaze wave crest, bottom-left <-> top-right)
+    const perpX = -dirY;
+    const perpY = dirX;
+    const angleRad = Math.atan2(perpY, perpX);
+
+    // Travel from just outside bottom-right (-0.24) to just past top-left (1.24)
+    const travel = -0.24 + u * 1.48;
+    const cx = ix + iw * (1 - travel);
+    const cy = iy + ih * (1 - travel);
+
+    // Slightly warmer/softer tuning in Sumi-e so it harmonizes with monochrome ink while staying gold
+    const styleScale = this.artStyle === "sumie" ? 0.84 : 1.0;
+
+    ctx.save();
+
+    // 1. Broad, diffused antique-gold atmospheric glaze (warm lacquer undertone)
+    ctx.globalCompositeOperation = "soft-light";
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angleRad);
+    ctx.scale(1.0, 0.36);
+    const washR = diag * 0.54;
+    const washGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, washR);
+    washGrad.addColorStop(0.0, `rgba(232, 186, 84, ${(0.34 * env * styleScale).toFixed(4)})`);
+    washGrad.addColorStop(0.45, `rgba(198, 145, 44, ${(0.20 * env * styleScale).toFixed(4)})`);
+    washGrad.addColorStop(0.82, `rgba(156, 108, 26, ${(0.07 * env * styleScale).toFixed(4)})`);
+    washGrad.addColorStop(1.0, "rgba(156, 108, 26, 0)");
+    ctx.fillStyle = washGrad;
+    ctx.beginPath();
+    ctx.arc(0, 0, washR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // 2. Organic multi-lobe undulating gold-leaf sheen (3 feathered caustic pockets along a curved crest)
+    ctx.globalCompositeOperation = "screen";
+    const lobes: [number, number, number, number, string, string, number][] = [
+      // [crestOffsetFrac, trailOffsetFrac, rxScale, ryScale, coreRgb, midRgb, alpha]
+      [-0.24,  0.032, 0.34, 0.115, "255, 236, 176", "218, 168, 66", 0.22],
+      [ 0.02, -0.018, 0.38, 0.125, "255, 244, 204", "232, 184, 78", 0.28],
+      [ 0.27,  0.026, 0.32, 0.105, "248, 222, 148", "194, 142, 46", 0.20],
+    ];
+
+    for (let i = 0; i < lobes.length; i++) {
+      const [crestF, trailF, rxS, ryS, coreRgb, midRgb, baseA] = lobes[i];
+      // Subtle organic wave undulation along the travel direction
+      const waveWobble = Math.sin(u * Math.PI * 2.4 + i * 2.15) * diag * 0.024;
+      const lx = cx + perpX * (crestF * diag) + dirX * (trailF * diag + waveWobble);
+      const ly = cy + perpY * (crestF * diag) + dirY * (trailF * diag + waveWobble);
+      const lobeTilt = angleRad + Math.sin(u * Math.PI * 1.8 + i * 1.7) * 0.085;
+      const rx = diag * rxS;
+      const ry = diag * ryS;
+
+      ctx.save();
+      ctx.translate(lx, ly);
+      ctx.rotate(lobeTilt);
+      ctx.scale(1.0, ry / Math.max(1, rx));
+      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
+      const a0 = baseA * env * styleScale;
+      g.addColorStop(0.0, `rgba(${coreRgb}, ${a0.toFixed(4)})`);
+      g.addColorStop(0.38, `rgba(${midRgb}, ${(a0 * 0.56).toFixed(4)})`);
+      g.addColorStop(0.75, `rgba(176, 124, 34, ${(a0 * 0.16).toFixed(4)})`);
+      g.addColorStop(1.0, "rgba(176, 124, 34, 0)");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(0, 0, rx, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // 3. Delicate curved champagne-gold liquid filament along the leading crest
+    ctx.save();
+    const spanHalf = diag * 0.48;
+    const p0x = cx - perpX * spanHalf + dirX * (diag * 0.03);
+    const p0y = cy - perpY * spanHalf + dirY * (diag * 0.03);
+    const p1x = cx + perpX * spanHalf + dirX * (diag * 0.03);
+    const p1y = cy + perpY * spanHalf + dirY * (diag * 0.03);
+    const bow = diag * (0.055 + 0.018 * Math.sin(u * Math.PI * 2.0));
+    const ctrlX = cx + dirX * bow;
+    const ctrlY = cy + dirY * bow;
+
+    const crestGrad = ctx.createLinearGradient(p0x, p0y, p1x, p1y);
+    crestGrad.addColorStop(0.0, "rgba(255, 240, 192, 0)");
+    crestGrad.addColorStop(0.28, `rgba(242, 200, 108, ${(0.18 * env * styleScale).toFixed(4)})`);
+    crestGrad.addColorStop(0.52, `rgba(255, 246, 214, ${(0.28 * env * styleScale).toFixed(4)})`);
+    crestGrad.addColorStop(0.76, `rgba(232, 186, 88, ${(0.16 * env * styleScale).toFixed(4)})`);
+    crestGrad.addColorStop(1.0, "rgba(255, 240, 192, 0)");
+
+    ctx.strokeStyle = crestGrad;
+    ctx.lineCap = "round";
+    ctx.lineWidth = Math.max(4, diag * 0.028);
+    ctx.filter = "blur(6px)";
+    ctx.beginPath();
+    ctx.moveTo(p0x, p0y);
+    ctx.quadraticCurveTo(ctrlX, ctrlY, p1x, p1y);
+    ctx.stroke();
+    ctx.filter = "none";
+    ctx.restore();
+
+    // 4. Fine kinpaku (gold-leaf) pinpoint motes catching light strictly as the glaze passes
+    const moteCount = 12;
+    for (let m = 0; m < moteCount; m++) {
+      // Deterministic pseudo-random portrait coordinates
+      const hx = ((Math.sin(m * 12.9898 + 4.1414) * 43758.5453) % 1 + 1) % 1;
+      const hy = ((Math.sin(m * 78.233 + 1.9173) * 28461.7321) % 1 + 1) % 1;
+      const mx = ix + (0.08 + hx * 0.84) * iw;
+      const my = iy + (0.08 + hy * 0.84) * ih;
+      // Signed distance of mote along the bottom-right -> top-left wave axis
+      const dAlong = (mx - cx) * dirX + (my - cy) * dirY;
+      const bandSigma = diag * 0.11;
+      const prox = Math.exp(-(dAlong * dAlong) / (2 * bandSigma * bandSigma));
+      if (prox < 0.08) continue;
+
+      const twinkle = 0.55 + 0.45 * Math.sin(nowSec * 6.2 + m * 2.7);
+      const moteA = 0.46 * env * prox * twinkle * styleScale;
+      const moteR = Math.max(1.2, diag * (0.004 + (m % 3) * 0.0018));
+      const mg = ctx.createRadialGradient(mx, my, 0, mx, my, moteR * 2.4);
+      mg.addColorStop(0.0, `rgba(255, 248, 220, ${moteA.toFixed(4)})`);
+      mg.addColorStop(0.45, `rgba(236, 190, 88, ${(moteA * 0.5).toFixed(4)})`);
+      mg.addColorStop(1.0, "rgba(236, 190, 88, 0)");
+      ctx.fillStyle = mg;
+      ctx.beginPath();
+      ctx.arc(mx, my, moteR * 2.4, 0, Math.PI * 2);
+      ctx.fill();
     }
 
     ctx.restore();

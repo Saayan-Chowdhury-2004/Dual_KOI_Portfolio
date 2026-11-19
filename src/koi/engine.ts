@@ -39,6 +39,7 @@ export class KoiPondEngine {
 
   private profileOpen = false;
   private manualThemeOverride: boolean | null = null;
+  private themeToggleAnchorLight: boolean | null = null;
   private simulatedSystemHours: number | null = null;
   private lastSystemSyncMs = 0;
 
@@ -230,7 +231,7 @@ export class KoiPondEngine {
       if (this.manualThemeOverride !== null) {
         this.renderer.setLightMode(this.manualThemeOverride, !this.isActiveLayer);
       } else if (typeof state.timeOfDayHours === "number") {
-        this.renderer.setTimeOfDayHours(state.timeOfDayHours, !this.isActiveLayer);
+        this.renderer.transitionToTimeOfDayHours(state.timeOfDayHours, !this.isActiveLayer);
       } else {
         this.renderer.setLightMode(state.isLightMode, !this.isActiveLayer);
       }
@@ -279,6 +280,7 @@ export class KoiPondEngine {
 
   public syncVisualStateFrom(other: KoiPondEngine): void {
     this.manualThemeOverride = other.manualThemeOverride;
+    this.themeToggleAnchorLight = other.themeToggleAnchorLight;
     this.simulatedSystemHours = other.simulatedSystemHours;
     this.renderer.syncDynamicStateFrom(other.renderer);
     const openProg = other.portfolioUI.getOpenProgress();
@@ -446,6 +448,19 @@ export class KoiPondEngine {
         will-change: transform, opacity;
       }
 
+      #layer-koi .ms-ctrl-btn--sys-time::after {
+        content: "";
+        position: absolute;
+        bottom: 6px;
+        right: 6px;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: radial-gradient(circle, #fff3c4 0%, #e6b44c 65%, #a8741c 100%);
+        box-shadow: 0 0 6px rgba(242, 196, 86, 0.85);
+        pointer-events: none;
+      }
+
       #layer-koi .ms-ctrl-btn--flashlight-off {
         opacity: 0.62;
         filter: saturate(0.72) brightness(0.76);
@@ -496,9 +511,26 @@ export class KoiPondEngine {
 
     toggleBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      const nextLight = !this.renderer.isLightMode;
-      this.manualThemeOverride = nextLight;
-      this.renderer.setLightMode(nextLight, false);
+      // 3-state cycle: System Time (null) -> opposite manual mode -> other manual mode -> back to System Time (null)
+      if (this.manualThemeOverride === null) {
+        const anchorLight = this.renderer.isLightMode;
+        this.themeToggleAnchorLight = anchorLight;
+        const firstManual = !anchorLight;
+        this.manualThemeOverride = firstManual;
+        this.renderer.setLightMode(firstManual, false);
+      } else if (
+        this.themeToggleAnchorLight !== null &&
+        this.manualThemeOverride !== this.themeToggleAnchorLight
+      ) {
+        const secondManual = this.themeToggleAnchorLight;
+        this.manualThemeOverride = secondManual;
+        this.renderer.setLightMode(secondManual, false);
+      } else {
+        this.manualThemeOverride = null;
+        this.themeToggleAnchorLight = null;
+        this.lastSystemSyncMs = performance.now();
+        this.renderer.transitionToTimeOfDayHours(this.getCurrentSystemHours(), false);
+      }
       this.updateControlsUI();
       this.syncPortfolioUI(0);
       this.renderFrame();
@@ -603,6 +635,18 @@ export class KoiPondEngine {
       this.controlsEl.classList.toggle("ms-controls--night", !isLight);
       this.toggleBtn.setAttribute("aria-checked", isLight ? "true" : "false");
       this.flashlightBtn.style.display = isLight ? "none" : "flex";
+    }
+    const isSystemSync = this.manualThemeOverride === null;
+    this.toggleBtn.classList.toggle("ms-ctrl-btn--sys-time", isSystemSync);
+    if (isSystemSync) {
+      this.toggleBtn.title = "Lighting: Current Time of Day (Live) — Click to switch";
+      this.toggleBtn.setAttribute("aria-label", "Lighting synced to current time of day. Click to switch.");
+    } else if (this.manualThemeOverride) {
+      this.toggleBtn.title = "Lighting: Day Mode — Click to switch";
+      this.toggleBtn.setAttribute("aria-label", "Day mode active. Click to switch.");
+    } else {
+      this.toggleBtn.title = "Lighting: Night Mode — Click to switch";
+      this.toggleBtn.setAttribute("aria-label", "Night mode active. Click to switch.");
     }
     this.syncCelestialToggleArc();
 

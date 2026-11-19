@@ -25,6 +25,9 @@ export class KoiFluidApp {
   private mokkotsuCanvas: HTMLCanvasElement;
   private sumieCanvas: HTMLCanvasElement;
   private fluidCanvas: HTMLCanvasElement;
+  private idleCurtainEl: HTMLElement | null = null;
+  private idleCurtainTimer: number | null = null;
+  private hasUserDragged = false;
 
   private mokkotsuEngine: KoiPondEngine;
   private sumieEngine: KoiPondEngine;
@@ -122,6 +125,9 @@ export class KoiFluidApp {
         onSwapComplete: () => {
           this.swapInkStyleLayers();
         },
+        onDragStart: () => {
+          this.handleUserDragDetected();
+        },
       },
       () => (this.activeStyle === "mokkotsu" ? this.mokkotsuCanvas : this.sumieCanvas),
       () => this.getActiveEngine().getColumnsUvBounds()
@@ -137,6 +143,68 @@ export class KoiFluidApp {
     window.addEventListener("blur", this.onWindowBlur);
     window.addEventListener("click", this.onClickCapture, { capture: true });
     window.addEventListener("resize", this.onResize);
+
+    // Track viewer's first 10 seconds; if no click-drag occurs, reveal the golden curtain cue
+    this.startIdleDragCurtainTimer();
+  }
+
+  private startIdleDragCurtainTimer(): void {
+    if (this.hasUserDragged || this.disposed) return;
+    if (this.idleCurtainTimer !== null) {
+      window.clearTimeout(this.idleCurtainTimer);
+    }
+    this.idleCurtainTimer = window.setTimeout(() => {
+      this.idleCurtainTimer = null;
+      if (!this.hasUserDragged && !this.disposed) {
+        this.showIdleDragCurtain();
+      }
+    }, 10000);
+  }
+
+  private showIdleDragCurtain(): void {
+    if (this.idleCurtainEl || this.hasUserDragged || this.disposed) return;
+
+    const curtain = document.createElement("div");
+    curtain.id = "idle-drag-curtain";
+    curtain.setAttribute("aria-live", "polite");
+    curtain.innerHTML = `
+      <div class="idc-gold-veil idc-gold-veil--base"></div>
+      <div class="idc-gold-veil idc-gold-veil--shimmer"></div>
+      <div class="idc-prompt" role="status">
+        <span class="idc-arrow idc-arrow--left" aria-hidden="true">←</span>
+        <span class="idc-label">Click drag on screen</span>
+        <span class="idc-arrow idc-arrow--right" aria-hidden="true">→</span>
+      </div>
+    `;
+    this.stageEl.appendChild(curtain);
+    this.idleCurtainEl = curtain;
+
+    // Trigger smooth CSS fade-in on next frame
+    requestAnimationFrame(() => {
+      if (this.idleCurtainEl === curtain && !this.hasUserDragged) {
+        curtain.classList.add("idc-visible");
+      }
+    });
+  }
+
+  private handleUserDragDetected(): void {
+    if (this.hasUserDragged) return;
+    this.hasUserDragged = true;
+
+    if (this.idleCurtainTimer !== null) {
+      window.clearTimeout(this.idleCurtainTimer);
+      this.idleCurtainTimer = null;
+    }
+
+    const curtain = this.idleCurtainEl;
+    if (curtain) {
+      curtain.classList.remove("idc-visible");
+      curtain.classList.add("idc-dismissed");
+      this.idleCurtainEl = null;
+      window.setTimeout(() => {
+        curtain.remove();
+      }, 720);
+    }
   }
 
   public setMenuBlurPx(px: number): void {
@@ -367,12 +435,142 @@ export class KoiFluidApp {
         display: block;
         filter: contrast(var(--koi-fluid-contrast, 1.20));
       }
+
+      /* 10-second idle non-uniform translucent golden curtain & drag cue */
+      #idle-drag-curtain {
+        position: absolute;
+        inset: 0;
+        z-index: 40;
+        pointer-events: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        transition: opacity 950ms cubic-bezier(0.22, 1, 0.36, 1);
+        overflow: hidden;
+      }
+
+      #idle-drag-curtain.idc-visible {
+        opacity: 1;
+      }
+
+      #idle-drag-curtain.idc-dismissed {
+        opacity: 0;
+        transition: opacity 600ms ease-out;
+      }
+
+      .idc-gold-veil {
+        position: absolute;
+        inset: -8%;
+        pointer-events: none;
+      }
+
+      /* Multi-tone dappled gold leaf / burnished amber & pale champagne pockets (never uniform) */
+      .idc-gold-veil--base {
+        background:
+          radial-gradient(ellipse 56% 48% at 14% 18%, rgba(132, 84, 14, 0.38) 0%, rgba(162, 110, 24, 0.14) 54%, transparent 82%),
+          radial-gradient(ellipse 62% 52% at 86% 82%, rgba(124, 78, 12, 0.40) 0%, rgba(158, 106, 22, 0.16) 56%, transparent 84%),
+          radial-gradient(ellipse 50% 44% at 76% 20%, rgba(252, 224, 138, 0.34) 0%, rgba(226, 182, 74, 0.12) 56%, transparent 82%),
+          radial-gradient(ellipse 54% 46% at 24% 78%, rgba(248, 214, 118, 0.30) 0%, rgba(212, 162, 54, 0.10) 58%, transparent 84%),
+          radial-gradient(ellipse 46% 38% at 52% 48%, rgba(255, 238, 174, 0.24) 0%, rgba(196, 146, 44, 0.16) 62%, rgba(138, 92, 18, 0.24) 100%),
+          linear-gradient(132deg, rgba(142, 94, 18, 0.22) 0%, rgba(232, 188, 86, 0.18) 38%, rgba(166, 114, 28, 0.24) 68%, rgba(246, 212, 118, 0.20) 100%);
+        animation: idcGoldDrift 14s ease-in-out infinite alternate;
+      }
+
+      /* Secondary counter-drifting darker/lighter gold pockets for living organic depth */
+      .idc-gold-veil--shimmer {
+        background:
+          radial-gradient(circle 34vmax at 36% 32%, rgba(255, 242, 188, 0.22) 0%, transparent 68%),
+          radial-gradient(circle 38vmax at 66% 64%, rgba(128, 82, 14, 0.28) 0%, transparent 70%),
+          radial-gradient(circle 28vmax at 84% 42%, rgba(246, 206, 104, 0.20) 0%, transparent 66%),
+          radial-gradient(circle 32vmax at 16% 58%, rgba(144, 96, 20, 0.26) 0%, transparent 68%);
+        mix-blend-mode: soft-light;
+        animation: idcGoldDriftReverse 18s ease-in-out infinite alternate;
+      }
+
+      .idc-prompt {
+        position: relative;
+        z-index: 2;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.75em;
+        padding: 0.72rem 1.85rem;
+        border-radius: 999px;
+        background: radial-gradient(
+          ellipse 120% 140% at 50% 40%,
+          rgba(32, 22, 8, 0.56) 0%,
+          rgba(22, 15, 6, 0.44) 65%,
+          rgba(16, 10, 4, 0.34) 100%
+        );
+        border: 1px solid rgba(252, 224, 140, 0.48);
+        box-shadow:
+          0 10px 36px rgba(24, 14, 2, 0.32),
+          inset 0 1px 0 rgba(255, 244, 204, 0.36);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+        font-family: "Cormorant Garamond", "EB Garamond", "Noto Serif JP", Georgia, serif;
+        font-size: clamp(1.18rem, 2.1vw, 1.72rem);
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        color: #fff3cc;
+        text-shadow:
+          0 1px 12px rgba(20, 12, 2, 0.78),
+          0 0 22px rgba(242, 196, 86, 0.45);
+        animation: idcPromptBreathe 3.2s ease-in-out infinite;
+      }
+
+      .idc-arrow {
+        display: inline-block;
+        color: #f6cf6e;
+        font-weight: 500;
+      }
+
+      .idc-arrow--left {
+        animation: idcNudgeLeft 2.2s ease-in-out infinite;
+      }
+
+      .idc-arrow--right {
+        animation: idcNudgeRight 2.2s ease-in-out infinite;
+      }
+
+      @keyframes idcGoldDrift {
+        0% { transform: translate3d(-1.2%, -0.8%, 0) scale(1.02); }
+        100% { transform: translate3d(1.4%, 1.0%, 0) scale(1.05); }
+      }
+
+      @keyframes idcGoldDriftReverse {
+        0% { transform: translate3d(1.5%, -1.0%, 0) scale(1.04); }
+        100% { transform: translate3d(-1.5%, 1.2%, 0) scale(1.01); }
+      }
+
+      @keyframes idcPromptBreathe {
+        0%, 100% { transform: translateY(0px); opacity: 0.94; }
+        50% { transform: translateY(-2px); opacity: 1; }
+      }
+
+      @keyframes idcNudgeLeft {
+        0%, 100% { transform: translateX(0px); }
+        50% { transform: translateX(-5px); }
+      }
+
+      @keyframes idcNudgeRight {
+        0%, 100% { transform: translateX(0px); }
+        50% { transform: translateX(5px); }
+      }
     `;
     document.head.appendChild(style);
   }
 
   public destroy(): void {
     this.disposed = true;
+    if (this.idleCurtainTimer !== null) {
+      window.clearTimeout(this.idleCurtainTimer);
+      this.idleCurtainTimer = null;
+    }
+    if (this.idleCurtainEl) {
+      this.idleCurtainEl.remove();
+      this.idleCurtainEl = null;
+    }
     cancelAnimationFrame(this.raf);
     window.removeEventListener("pointerdown", this.onPointerDownCapture, { capture: true });
     window.removeEventListener("pointermove", this.onPointerMoveCapture, { capture: true });

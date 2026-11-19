@@ -5,6 +5,7 @@ export type FluidMaskPhase = "idle" | "dragging" | "flooding" | "retracting";
 export interface FluidMaskCallbacks {
   onCoverageChange?: (coverage: number, phase: FluidMaskPhase) => void;
   onSwapComplete?: () => void;
+  onDragStart?: () => void;
 }
 
 interface FBO {
@@ -186,6 +187,7 @@ export class FluidMaskEngine {
       this.isDragging = true;
       this.phase = "dragging";
       this.retractProgress = 0;
+      this.callbacks.onDragStart?.();
       this.splatSegment(this.startClientX, this.startClientY, clientX, clientY, 1.0);
       this.lastClientX = clientX;
       this.lastClientY = clientY;
