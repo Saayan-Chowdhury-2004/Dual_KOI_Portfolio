@@ -13,6 +13,7 @@ import {
   type KoiArtStyleMeta,
 } from "./koiRenderer";
 import { DEFAULT_KOI_CONFIG, PondWorld } from "./pondWorld";
+import { extractSumieFloatingGlyphDataUrl } from "./sumieWash";
 import type { KoiPondConfig, KoiSpec } from "./koiTypes";
 
 const STEP = 1 / 60;
@@ -34,6 +35,12 @@ export class KoiPondEngine {
   private toggleIconEl!: HTMLImageElement;
   private toggleSunIconEl!: HTMLImageElement;
   private toggleMoonIconEl!: HTMLImageElement;
+  private profileIconEl!: HTMLImageElement;
+  private flashlightIconEl!: HTMLImageElement;
+  private sumieSunUri: string | null = null;
+  private sumieMoonUri: string | null = null;
+  private sumieOniUri: string | null = null;
+  private sumieFlashUri: string | null = null;
   private profileBtn!: HTMLButtonElement;
   private flashlightBtn!: HTMLButtonElement;
 
@@ -466,13 +473,29 @@ export class KoiPondEngine {
         filter: saturate(0.72) brightness(0.76);
       }
 
-      /* Sumi-e Zen Ink Wash Style Synchronization for Control Buttons & Icons */
-      #layer-koi .ms-floating-controls[data-art-style="sumie"] .ms-ctrl-icon {
-        filter: grayscale(1) contrast(1.22) brightness(0.96);
+      /* Sumi-e Zen Ink Wash: floating transparent-background glyphs like kanji + red hanko seal */
+      #layer-koi .ms-floating-controls[data-art-style="sumie"] .ms-ctrl-btn {
+        background: transparent !important;
+        box-shadow: none !important;
+        border-radius: 0 !important;
+        overflow: visible !important;
       }
 
-      #layer-koi .ms-floating-controls[data-art-style="sumie"]:not(.ms-controls--night) .ms-ctrl-icon {
-        filter: grayscale(1) contrast(1.30) brightness(0.88);
+      #layer-koi .ms-floating-controls[data-art-style="sumie"] .ms-ctrl-btn:hover,
+      #layer-koi .ms-floating-controls[data-art-style="sumie"] .ms-ctrl-btn:focus-visible {
+        box-shadow: none !important;
+        transform: translate3d(0, -1.5px, 0) scale(1.06);
+        filter: none;
+      }
+
+      #layer-koi .ms-floating-controls[data-art-style="sumie"] .ms-ctrl-icon {
+        object-fit: contain;
+        filter: none;
+      }
+
+      #layer-koi .ms-floating-controls[data-art-style="sumie"] .ms-ctrl-btn--sys-time::after {
+        background: #c4281c;
+        box-shadow: none;
       }
     `;
     document.head.appendChild(style);
@@ -615,7 +638,27 @@ export class KoiPondEngine {
     this.toggleSunIconEl = sunIcon;
     this.toggleMoonIconEl = moonIcon;
     this.profileBtn = profileBtn;
+    this.profileIconEl = profileIcon;
     this.flashlightBtn = flashlightBtn;
+    this.flashlightIconEl = flashlightIcon;
+
+    // Pre-extract crisp halo-free transparent Sumi-e floating glyphs (Sun #141210, Moon #e8e0d0, Oni #c4281c)
+    extractSumieFloatingGlyphDataUrl(ICON_SUN_URI, [20, 18, 16], (uri) => {
+      this.sumieSunUri = uri;
+      if (this.lastControlsStyle === "sumie") this.toggleSunIconEl.src = uri;
+    });
+    extractSumieFloatingGlyphDataUrl(ICON_MOON_URI, [232, 224, 208], (uri) => {
+      this.sumieMoonUri = uri;
+      if (this.lastControlsStyle === "sumie") this.toggleMoonIconEl.src = uri;
+    });
+    extractSumieFloatingGlyphDataUrl(ICON_ONI_URI, [196, 40, 28], (uri) => {
+      this.sumieOniUri = uri;
+      if (this.lastControlsStyle === "sumie") this.profileIconEl.src = uri;
+    });
+    extractSumieFloatingGlyphDataUrl(ICON_FLASHLIGHT_URI, [232, 224, 208], (uri) => {
+      this.sumieFlashUri = uri;
+      if (this.lastControlsStyle === "sumie") this.flashlightIconEl.src = uri;
+    });
 
     container.appendChild(toggleBtn);
     container.appendChild(profileBtn);
@@ -660,6 +703,17 @@ export class KoiPondEngine {
       this.lastControlsStyle = styleMeta.id;
       this.controlsEl.setAttribute("data-art-style", styleMeta.id);
       this.portfolioUI.setArtStyle(styleMeta.id);
+      if (styleMeta.id === "sumie") {
+        if (this.sumieSunUri) this.toggleSunIconEl.src = this.sumieSunUri;
+        if (this.sumieMoonUri) this.toggleMoonIconEl.src = this.sumieMoonUri;
+        if (this.sumieOniUri) this.profileIconEl.src = this.sumieOniUri;
+        if (this.sumieFlashUri) this.flashlightIconEl.src = this.sumieFlashUri;
+      } else {
+        this.toggleSunIconEl.src = ICON_SUN_URI;
+        this.toggleMoonIconEl.src = ICON_MOON_URI;
+        this.profileIconEl.src = ICON_ONI_URI;
+        this.flashlightIconEl.src = ICON_FLASHLIGHT_URI;
+      }
     }
 
     const flashOn = this.renderer.isFlashlightEnabled;

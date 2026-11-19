@@ -28,6 +28,16 @@ import {
 import { koiBodyHalfWidth, SPINE_NODE_COUNT } from "./koiGeometry";
 import { fbm2D, hash2D, koiClamp, koiLerp, koiSmoothstep } from "./koiMath";
 import { POND_PALETTES } from "./koiPond";
+import {
+  bakeSumieParchment,
+  bakeSumieWashMosaic,
+  bakeSumieForegroundPadSprite,
+  paintSumieWaterLily,
+  bakeSumieMapleSprite,
+  bakeSumieWashBackingSprite,
+  bakeSumieSingleFlowerSprite,
+  type SumiePaperBundle,
+} from "./sumieWash";
 import type {
   KoiFish,
   KoiPondConfig,
@@ -128,6 +138,25 @@ export class KoiPondRenderer {
   private parchmentCanvas: HTMLCanvasElement | null = null;
   private parchmentKey = "";
   private parchmentCache: Map<string, HTMLCanvasElement> = new Map();
+  private sumiePaperCache: Map<string, SumiePaperBundle> = new Map();
+  private sumieMapleCache: Map<string, HTMLCanvasElement[]> = new Map();
+  private sumieClusterCache: Map<string, HTMLCanvasElement[]> = new Map();
+  private sumieSingleFlowerCache: Map<string, HTMLCanvasElement[]> = new Map();
+  private sumieCornerPadCache: Map<string, HTMLCanvasElement[]> = new Map();
+  private dofSakuraCache: Map<string, Array<{ near: HTMLCanvasElement; far: HTMLCanvasElement }>> = new Map();
+  private sumieFlowers: Array<{
+    fx: number;
+    fy: number;
+    ox: number;
+    oy: number;
+    vx: number;
+    vy: number;
+    rot: number;
+    vrot: number;
+    sizeIdx: number;
+    phase: number;
+  }> = [];
+  private sumieFlowersLastTime = -1;
 
   private pebbleBedCanvas: HTMLCanvasElement | null = null;
   private pebbleBedKey = "";
@@ -853,6 +882,28 @@ export class KoiPondRenderer {
       this.clickRipples.shift();
     }
 
+    // 0. Immediate individual ripple impulse on nearby Sumi-e 5-petal flowers
+    if (this.artStyle === "sumie" && this.sumieFlowers.length > 0) {
+      const flReach = 225 * unit;
+      for (let i = 0; i < this.sumieFlowers.length; i++) {
+        const fl = this.sumieFlowers[i];
+        const curX = worldW * fl.fx + fl.ox;
+        const curY = worldH * fl.fy + fl.oy;
+        const dx = curX - x;
+        const dy = curY - y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < flReach) {
+          const ux = dist > 0.5 ? dx / dist : Math.cos(i * 2.1);
+          const uy = dist > 0.5 ? dy / dist : Math.sin(i * 2.1);
+          const falloff = Math.pow(1 - dist / flReach, 1.25);
+          const pushSpd = (58 + (i % 5) * 9) * falloff * unit;
+          fl.vx += ux * pushSpd;
+          fl.vy += uy * pushSpd;
+          fl.vrot += ((i % 2 === 0 ? 1 : -1) * (1.8 + (i % 4) * 0.55)) * falloff;
+        }
+      }
+    }
+
     // 1. Immediate ripple impulse on nearby Floating Sakura Flowers & Petals
     const sakuraReach = 175 * unit;
     for (let i = 0; i < this.floatingSakuraParticles.length; i++) {
@@ -1245,9 +1296,27 @@ export class KoiPondRenderer {
   /**
    * Bakes an authentic handmade Torinoko Washi / antique manuscript parchment sheet.
    */
+  private ensureSumiePaperBundle(width: number, height: number, isLight: boolean): SumiePaperBundle {
+    const w = Math.max(64, Math.round(width));
+    const h = Math.max(64, Math.round(height));
+    const key = `${w}x${h}:${isLight ? "sumie-paper-day-v1" : "sumie-paper-night-v1"}`;
+    const cached = this.sumiePaperCache.get(key);
+    if (cached) return cached;
+    if (this.sumiePaperCache.size >= 4) this.sumiePaperCache.clear();
+    const bundle = bakeSumieParchment(w, h, isLight);
+    this.sumiePaperCache.set(key, bundle);
+    return bundle;
+  }
+
   private ensureParchmentCanvas(width: number, height: number, isLight: boolean): HTMLCanvasElement {
     const w = Math.max(1, Math.round(width));
     const h = Math.max(1, Math.round(height));
+    if (this.artStyle === "sumie") {
+      const bundle = this.ensureSumiePaperBundle(w, h, isLight);
+      this.parchmentCanvas = bundle.canvas;
+      this.parchmentKey = `${w}x${h}:sumie:${isLight ? "L" : "D"}`;
+      return bundle.canvas;
+    }
     const key = `${w}x${h}:${isLight ? "washi-day-v3" : "washi-night-v3"}`;
     const cached = this.parchmentCache.get(key);
     if (cached) {
@@ -1467,6 +1536,12 @@ export class KoiPondRenderer {
       ctx.globalAlpha = 1.0 - daylight;
       ctx.drawImage(pebbleNight, 0, 0, worldW, worldH);
       ctx.restore();
+    }
+
+    // Sumi-e wet-on-wet background mosaic is fully baked in ensurePebbleBedCanvas (no riverbed stones/pools)
+    if ((style as KoiArtStyle) === "sumie") {
+      ctx.restore();
+      return;
     }
 
     // Default `mokkotsu` & `sumie` submerged water pools and riverbed stones
@@ -2045,6 +2120,59 @@ export class KoiPondRenderer {
     customBasePx?: number,
     customTipPx?: number
   ): void {
+    if ((style as KoiArtStyle) === "sumie") {
+      ctx.save();
+      const solar = this.getSolarLightingState();
+      const day = solar.daylight;
+      const inkRgb = mixRgb([186, 178, 164], [24, 22, 19], day);
+      const baseAlpha = isDeepStem ? 0.36 : 0.68;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      const segs = 18;
+      let prevX = p0.x;
+      let prevY = p0.y;
+      for (let sIdx = 1; sIdx <= segs; sIdx++) {
+        const t = sIdx / segs;
+        const pose = this.evalCubicBezierPose(p0, c1, c2, p3, t);
+        // Slight dry-brush hand wobble
+        const wobble = Math.sin(t * 14.0 + stemIdx * 2.1) * 1.15 * unit;
+        const px = pose.x + pose.nx * wobble;
+        const py = pose.y + pose.ny * wobble;
+        // Fade into wash at the root end (t near 0) and taper gracefully
+        const fade = Math.min(1, t * 2.4) * (1.0 - Math.max(0, (t - 0.85) / 0.15) * 0.25);
+        const lw = (0.75 + (1.0 - t) * (isLargeLotus ? 1.25 : 0.85)) * unit;
+        ctx.beginPath();
+        ctx.moveTo(prevX, prevY);
+        ctx.lineTo(px, py);
+        ctx.lineWidth = Math.max(0.65, lw);
+        ctx.strokeStyle = rgbToRgba(inkRgb, baseAlpha * fade);
+        ctx.stroke();
+        prevX = px;
+        prevY = py;
+      }
+      // Small irregular dark wash leaf flick along mid-stem
+      if (!isDeepStem && hash2D(stemIdx, 4, 919) < 0.58) {
+        const lt = 0.42 + hash2D(stemIdx, 5, 919) * 0.24;
+        const lp = this.evalCubicBezierPose(p0, c1, c2, p3, lt);
+        const side = stemIdx % 2 === 0 ? 1 : -1;
+        const ang = Math.atan2(lp.ty, lp.tx) + side * 0.68;
+        const lLen = (8 + hash2D(stemIdx, 6, 919) * 7) * unit;
+        ctx.save();
+        ctx.translate(lp.x, lp.y);
+        ctx.rotate(ang);
+        ctx.fillStyle = rgbToRgba(inkRgb, baseAlpha * 0.72);
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.quadraticCurveTo(lLen * 0.45, -lLen * 0.34, lLen, 0);
+        ctx.quadraticCurveTo(lLen * 0.45, lLen * 0.30, 0, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+      ctx.restore();
+      return;
+    }
+
     const steps = 16;
     const baseW = (customBasePx ?? (isLargeLotus ? 3.8 : 2.4)) * unit;
     const tipW = (customTipPx ?? (isLargeLotus ? 1.7 : 1.1)) * unit;
@@ -2612,6 +2740,10 @@ export class KoiPondRenderer {
           style
         );
       }
+      if (style === "sumie") {
+        ctx.restore();
+        return;
+      }
       // Pass 3: Lateral Buds (secondary curved pedicels holding closed flower buds or young coiled leaf scrolls)
       for (let i = 0; i < allStems.length; i++) {
         const st = allStems[i];
@@ -2701,6 +2833,38 @@ export class KoiPondRenderer {
     this.lotusLeafSprites = [];
     this.companionLeafSprites = [];
     this.pinkLotusSprites = [];
+
+    if ((style as KoiArtStyle) === "sumie") {
+      for (let i = 0; i < specs.length; i++) {
+        const pad = specs[i];
+        const r = pad.r * quantUnit;
+        const sprite = bakeSumieForegroundPadSprite(r, i + 17, isLight, false);
+        this.lotusLeafSprites.push(sprite);
+        if (pad.hasLotus) {
+          const flRad = r * 0.60;
+          const flDim = Math.max(64, Math.ceil(flRad * 2.6));
+          const flSprite = document.createElement("canvas");
+          flSprite.width = flDim;
+          flSprite.height = flDim;
+          const fCtx = flSprite.getContext("2d");
+          if (fCtx) {
+            paintSumieWaterLily(fCtx, flDim * 0.5, flDim * 0.5, flRad, pad.notch + 0.42, isLight);
+          }
+          this.pinkLotusSprites.push(flSprite);
+        }
+      }
+      for (let cIdx = 0; cIdx < 18; cIdx++) {
+        const r = (15.0 + hash2D(cIdx, 1, 601) * 8.5) * quantUnit;
+        const cSprite = bakeSumieForegroundPadSprite(r, cIdx + 109, isLight, true);
+        this.companionLeafSprites.push(cSprite);
+      }
+      this.botanicalSpriteCacheMap.set(key, {
+        lotus: this.lotusLeafSprites,
+        companion: this.companionLeafSprites,
+        pinkLotus: this.pinkLotusSprites,
+      });
+      return;
+    }
 
     for (let i = 0; i < specs.length; i++) {
       const pad = specs[i];
@@ -3457,6 +3621,47 @@ export class KoiPondRenderer {
     const companionLeaves = this.getResolvedCompanionLeaves(worldW, worldH, unit, resolvedPads);
 
     ctx.save();
+    // In Sumi-e, draw 3 large cropped corner/edge dark foreground pads matching the reference composition
+    if (style === "sumie") {
+      const quantUnit = Math.round(unit * 40) / 40;
+      const cornerSpecs = [
+        { fx: 0.115, fy: 0.055, r: 96, rot: 2.35 },
+        { fx: 0.005, fy: 0.195, r: 74, rot: -0.35 },
+        { fx: 0.915, fy: 0.945, r: 82, rot: -2.15 },
+      ];
+      const getCornerSprites = (lightFlag: boolean) => {
+        const ck = `${quantUnit}:${lightFlag ? "L" : "D"}:sumie-corner-v1`;
+        let arr = this.sumieCornerPadCache.get(ck);
+        if (!arr) {
+          if (this.sumieCornerPadCache.size >= 4) this.sumieCornerPadCache.clear();
+          arr = cornerSpecs.map((cs, idx) =>
+            bakeSumieForegroundPadSprite(cs.r * quantUnit, 301 + idx * 19, lightFlag, false)
+          );
+          this.sumieCornerPadCache.set(ck, arr);
+        }
+        return arr;
+      };
+      const dayCorners = getCornerSprites(true);
+      const nightCorners = (!isLight || blendDayNight) ? getCornerSprites(false) : dayCorners;
+      for (let k = 0; k < cornerSpecs.length; k++) {
+        const cs = cornerSpecs[k];
+        const cx = worldW * cs.fx;
+        const cy = worldH * cs.fy;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(cs.rot);
+        if (blendDayNight) {
+          ctx.drawImage(dayCorners[k], -dayCorners[k].width * 0.5, -dayCorners[k].height * 0.5);
+          ctx.globalAlpha = 1.0 - daylight;
+          ctx.drawImage(nightCorners[k], -nightCorners[k].width * 0.5, -nightCorners[k].height * 0.5);
+        } else {
+          const spr = daylight >= 0.5 ? dayCorners[k] : nightCorners[k];
+          ctx.drawImage(spr, -spr.width * 0.5, -spr.height * 0.5);
+        }
+        ctx.restore();
+      }
+    }
+
     // PASS 4A: Draw all 18 Companion Leaf blades over their stem tips (concealing margin notch cleft joints)
     for (let cIdx = 0; cIdx < companionLeaves.length; cIdx++) {
       const comp = companionLeaves[cIdx];
@@ -3578,6 +3783,10 @@ export class KoiPondRenderer {
     isLight: boolean,
     style: KoiArtStyle
   ): void {
+    if ((style as KoiArtStyle) === "sumie") {
+      paintSumieWaterLily(ctx, fx, fy, radius, rotBase, isLight);
+      return;
+    }
     ctx.save();
     ctx.translate(fx, fy);
 
@@ -4073,7 +4282,7 @@ export class KoiPondRenderer {
     const koiNightFrac = 1.0 - koiDaylight;
     const exposure = this.computeKoiExposure(fish, isLight);
     const nightDepth = koiNightFrac * koiClamp(1 - (exposure - 0.55) / 0.8, 0.15, 1.0);
-    const nightWaterTint: [number, number, number] = [14, 30, 48];
+    const nightWaterTint: [number, number, number] = isSumie ? [22, 21, 19] : [14, 30, 48];
     const blendNight = (rgb: [number, number, number], strength = 0.34): [number, number, number] => {
       if (nightDepth <= 0.001) return rgb;
       const k = nightDepth * strength;
@@ -4084,16 +4293,18 @@ export class KoiPondRenderer {
       ];
     };
 
-    const shiroBase: [number, number, number] = isSumie ? [248, 242, 232] : [248, 238, 220];
-    const hiBase: [number, number, number] = isSumie ? [242, 46, 8] : [244, 66, 8];
-    const sumiBase: [number, number, number] = isSumie ? [12, 12, 14] : [14, 14, 16];
+    const shiroBase: [number, number, number] = isSumie ? [232, 224, 208] : [248, 238, 220];
+    const hiBase: [number, number, number] = isSumie ? [44, 41, 37] : [244, 66, 8];
+    const sumiBase: [number, number, number] = isSumie ? [18, 17, 15] : [14, 14, 16];
 
-    const shiroPigment = blendNight(darkenRgb(shiroBase, koiLerp(0.90, 1.0, koiDaylight)), 0.32);
-    const hiPigment = blendNight(darkenRgb(hiBase, koiLerp(0.92, 1.0, koiDaylight)), 0.24);
-    const sumiPigment = blendNight(sumiBase, 0.18);
-    const dayOutlineRgb: [number, number, number] = isSumie ? [12, 11, 11] : [30, 20, 14];
-    const outlineRgb: [number, number, number] = mixRgb([5, 10, 16], dayOutlineRgb, koiDaylight);
-    const outlineWidth = Math.max(1.5, fish.maxHalfWidth * (isSumie ? 0.038 : 0.020));
+    const shiroPigment = blendNight(darkenRgb(shiroBase, koiLerp(isSumie ? 0.86 : 0.90, 1.0, koiDaylight)), isSumie ? 0.16 : 0.32);
+    const hiPigment = blendNight(darkenRgb(hiBase, koiLerp(0.92, 1.0, koiDaylight)), isSumie ? 0.12 : 0.24);
+    const sumiPigment = blendNight(sumiBase, isSumie ? 0.10 : 0.18);
+    const dayOutlineRgb: [number, number, number] = isSumie ? [24, 22, 20] : [30, 20, 14];
+    const outlineRgb: [number, number, number] = isSumie
+      ? mixRgb([196, 188, 174], dayOutlineRgb, koiDaylight)
+      : mixRgb([5, 10, 16], dayOutlineRgb, koiDaylight);
+    const outlineWidth = Math.max(1.2, fish.maxHalfWidth * (isSumie ? 0.024 : 0.020));
 
     ctx.save();
     // Koi body stays 100% opaque across both Day and Night
@@ -4195,7 +4406,7 @@ export class KoiPondRenderer {
     }
 
     // Soft feathered moonlit dorsal wrap fading in continuously during twilight/night
-    if (koiNightFrac > 0.01) {
+    if (!isSumie && koiNightFrac > 0.01) {
       const sheenBands: Array<[number, number]> = [
         [0.85, 0.032],
         [0.62, 0.036],
@@ -4231,7 +4442,7 @@ export class KoiPondRenderer {
     // 3. Body contour outline (continuous daylight blend)
     ctx.save();
     if (isSumie) {
-      const sumieOutAlpha = koiLerp(0.80, 0.96, koiDaylight);
+      const sumieOutAlpha = koiLerp(0.54, 0.72, koiDaylight);
       this.strokeCalligraphicPolyline(ctx, buildRightFlankPts(1.0), outlineWidth, outlineRgb, sumieOutAlpha, fish.seed * 0.13, false);
       this.strokeCalligraphicPolyline(ctx, buildLeftFlankPts(1.0), outlineWidth, outlineRgb, sumieOutAlpha, fish.seed * 0.13 + 2.7, false);
     } else {
@@ -4382,42 +4593,35 @@ export class KoiPondRenderer {
       ctx.fillStyle = grad;
       ctx.fill();
     } else {
-      // SUMI-E: Luminous vermilion watercolor wash (NO muddy brown core + neon halo!)
-      // and deep velvety jet-black Sumi ink (NO blurry grey polka-dot circles!)
+      // SUMI-E: Pure monochrome wet-on-wet ink washes with soft bleeding feathered edges (zero color)
       const coreRgb: [number, number, number] = isSumiPatch
-        ? (isLight ? [14, 13, 14] : rgb)
-        : (isLight ? [244, 52, 8] : rgb);
+        ? (isLight ? [22, 20, 18] : [30, 28, 25])
+        : (isLight ? [46, 43, 39] : [54, 50, 46]);
+      const midRgb: [number, number, number] = isSumiPatch
+        ? (isLight ? [38, 35, 32] : [48, 45, 41])
+        : (isLight ? [74, 69, 62] : [82, 77, 70]);
+
+      // Outer wet bleed halo
+      ctx.save();
+      ctx.strokeStyle = rgbToRgba(midRgb, isLight ? 0.24 : 0.20);
+      ctx.lineWidth = Math.max(2.6, fish.maxHalfWidth * 0.09);
+      ctx.lineJoin = "round";
+      ctx.stroke();
+      ctx.restore();
+
       const grad = ctx.createRadialGradient(
-        cx - centerFrame.tx * (gradR * 0.12),
-        cy - centerFrame.ty * (gradR * 0.12),
-        gradR * 0.08,
+        cx - centerFrame.tx * (gradR * 0.10),
+        cy - centerFrame.ty * (gradR * 0.10),
+        gradR * 0.06,
         cx,
         cy,
         gradR
       );
-      if (isSumiPatch) {
-        grad.addColorStop(0.0, rgbToRgba(coreRgb, isLight ? 0.96 : 0.86));
-        grad.addColorStop(0.80, rgbToRgba(coreRgb, isLight ? 0.92 : 0.82));
-        grad.addColorStop(1.0, rgbToRgba(isLight ? [34, 31, 30] : coreRgb, isLight ? 0.86 : 0.76));
-      } else {
-        // Bright luminous vermilion core gently deepening toward edges like real watercolor backrun
-        grad.addColorStop(0.0, rgbToRgba(isLight ? [255, 76, 16] : coreRgb, isLight ? 0.94 : 0.86));
-        grad.addColorStop(0.65, rgbToRgba(coreRgb, isLight ? 0.94 : 0.84));
-        grad.addColorStop(1.0, rgbToRgba(isLight ? [216, 30, 4] : coreRgb, isLight ? 0.90 : 0.80));
-      }
+      grad.addColorStop(0.0, rgbToRgba(coreRgb, isLight ? 0.84 : 0.78));
+      grad.addColorStop(0.68, rgbToRgba(midRgb, isLight ? 0.74 : 0.68));
+      grad.addColorStop(1.0, rgbToRgba(coreRgb, isLight ? 0.82 : 0.72));
       ctx.fillStyle = grad;
       ctx.fill();
-
-      if (isLight) {
-        ctx.save();
-        ctx.clip();
-        // Subtle darker organic watercolor backrun along the deckled edge
-        tracePts();
-        ctx.strokeStyle = rgbToRgba(isSumiPatch ? [8, 8, 10] : [204, 24, 4], 0.44);
-        ctx.lineWidth = Math.max(1.8, fish.maxHalfWidth * 0.028);
-        ctx.stroke();
-        ctx.restore();
-      }
     }
     ctx.restore();
   }
@@ -4617,36 +4821,11 @@ export class KoiPondRenderer {
           ctx.ellipse(-thick, 0, Math.max(1, rx - thick * 0.45), Math.max(1, ry * 0.96), 0, spanA, -spanA, true);
           ctx.closePath();
 
-          let sumieScaleCol: string;
-          if (scaleDesign === 1) {
-            // Kohaku in Sumi-e: warm vermilion-cinnabar & soft grey ink crescents
-            sumieScaleCol =
-              layer === "hi"
-                ? `rgba(176, 36, 18, ${(0.56 * sumieFade).toFixed(2)})`
-                : `rgba(54, 48, 44, ${(0.44 * sumieFade).toFixed(2)})`;
-          } else if (scaleDesign === 2) {
-            // Shiro Utsuri in Sumi-e: crisp black-and-white sumi ink crescents
-            sumieScaleCol =
-              layer === "hi" || layer === "sumi"
-                ? `rgba(18, 17, 17, ${(0.72 * sumieFade).toFixed(2)})`
-                : `rgba(74, 72, 68, ${(0.42 * sumieFade).toFixed(2)})`;
-          } else if (scaleDesign === 3) {
-            // Classic Showa Sanshoku diagonal wrap crescents in Sumi-e
-            const waveBand = Math.sin(tBody * Math.PI * 2.6 + u * 2.1 + fish.seed * 0.37);
-            sumieScaleCol =
-              layer === "sumi" || waveBand > 0.38
-                ? `rgba(20, 19, 19, ${(0.70 * sumieFade).toFixed(2)})`
-                : layer === "hi" || waveBand < -0.52
-                  ? `rgba(154, 44, 22, ${(0.52 * sumieFade).toFixed(2)})`
-                  : `rgba(56, 52, 48, ${(0.42 * sumieFade).toFixed(2)})`;
-          } else {
-            // Taisho Sanke in Sumi-e: classic deep sumi ink & hanko red crescents
-            sumieScaleCol = isLight
-              ? (layer === "hi"
-                  ? `rgba(128, 22, 6, ${(0.42 * sumieFade).toFixed(2)})`
-                  : `rgba(34, 30, 28, ${(0.62 * sumieFade).toFixed(2)})`)
-              : `rgba(12, 22, 34, ${(0.46 * sumieFade).toFixed(2)})`;
-          }
+          // Monochrome dry-ink crescents (zero red/cinnabar/blue)
+          const sumieScaleCol =
+            layer === "hi" || layer === "sumi"
+              ? `rgba(28, 25, 22, ${(0.42 * sumieFade).toFixed(2)})`
+              : `rgba(68, 63, 56, ${(0.28 * sumieFade).toFixed(2)})`;
           ctx.fillStyle = sumieScaleCol;
           ctx.fill();
         }
@@ -4664,24 +4843,27 @@ export class KoiPondRenderer {
     nightDepth: number
   ): void {
     const isSumie = this.artStyle === "sumie";
-    const finStroke = rgbToRgba(outlineRgb, isLight ? (isSumie ? 0.95 : 0.86) : 0.72);
-    const finOutlineW = Math.max(1.15, fish.maxHalfWidth * (isSumie ? 0.032 : 0.017));
+    const finStroke = rgbToRgba(outlineRgb, isLight ? (isSumie ? 0.44 : 0.86) : (isSumie ? 0.42 : 0.72));
+    const finOutlineW = Math.max(0.85, fish.maxHalfWidth * (isSumie ? 0.016 : 0.017));
 
     const nightTint = (rgb: [number, number, number]): [number, number, number] => {
       if (nightDepth <= 0.001) return rgb;
-      const k = nightDepth * 0.34;
+      const k = nightDepth * (isSumie ? 0.18 : 0.34);
+      const tR = isSumie ? 24 : 14;
+      const tG = isSumie ? 22 : 30;
+      const tB = isSumie ? 20 : 48;
       return [
-        Math.round(rgb[0] * (1 - k) + 14 * k),
-        Math.round(rgb[1] * (1 - k) + 30 * k),
-        Math.round(rgb[2] * (1 - k) + 48 * k),
+        Math.round(rgb[0] * (1 - k) + tR * k),
+        Math.round(rgb[1] * (1 - k) + tG * k),
+        Math.round(rgb[2] * (1 - k) + tB * k),
       ];
     };
 
-    const ivoryTip = nightTint(isSumie ? [248, 242, 232] : [250, 240, 226]);
-    const warmBase = nightTint(isSumie ? [168, 158, 148] : [216, 172, 130]);
+    const ivoryTip = nightTint(isSumie ? [232, 224, 208] : [250, 240, 226]);
+    const warmBase = nightTint(isSumie ? [162, 154, 142] : [216, 172, 130]);
     const rayCol = isLight
-      ? (isSumie ? "rgba(22, 18, 16, 0.56)" : "rgba(122, 84, 52, 0.64)")
-      : "rgba(165, 212, 248, 0.50)";
+      ? (isSumie ? "rgba(38, 34, 30, 0.38)" : "rgba(122, 84, 52, 0.64)")
+      : (isSumie ? "rgba(206, 198, 184, 0.38)" : "rgba(165, 212, 248, 0.50)");
 
     // === 1. PECTORAL FINS (s = 0.276 .. 0.382) ===
     const pLead = this.sampleSpineFrame(fish, 0.276);
@@ -4789,7 +4971,7 @@ export class KoiPondRenderer {
         ctx.fillStyle = grad;
         ctx.fill();
       } else {
-        ctx.fillStyle = rgbToRgba(ivoryTip, 0.90);
+        ctx.fillStyle = rgbToRgba(ivoryTip, 0.68);
         ctx.fill();
       }
 
@@ -4799,9 +4981,9 @@ export class KoiPondRenderer {
       const rootMidX = (rootLx + rootTx) * 0.5;
       const rootMidY = (rootLy + rootTy) * 0.5;
       if (isSumie) {
-        const rootWash = ctx.createRadialGradient(rootMidX, rootMidY, span * 0.02, rootMidX, rootMidY, span * 0.52);
-        rootWash.addColorStop(0.0, rgbToRgba(nightTint([12, 11, 11]), isLight ? 0.94 : 0.78));
-        rootWash.addColorStop(0.45, rgbToRgba(nightTint([48, 44, 42]), isLight ? 0.44 : 0.32));
+        const rootWash = ctx.createRadialGradient(rootMidX, rootMidY, span * 0.02, rootMidX, rootMidY, span * 0.48);
+        rootWash.addColorStop(0.0, rgbToRgba(nightTint([36, 33, 29]), isLight ? 0.48 : 0.42));
+        rootWash.addColorStop(0.5, rgbToRgba(nightTint([78, 72, 66]), isLight ? 0.22 : 0.18));
         rootWash.addColorStop(1.0, rgbToRgba(ivoryTip, 0.0));
         ctx.fillStyle = rootWash;
         ctx.fillRect(rootMidX - span * 1.4, rootMidY - span * 1.4, span * 2.8, span * 2.8);
@@ -5236,11 +5418,10 @@ export class KoiPondRenderer {
     const tailGrad = ctx.createLinearGradient(gx0, gy0, gx1, gy1);
 
     if (style === "sumie") {
-      tailGrad.addColorStop(0.0, rgbToRgba(darkenRgb(basePigment, 0.92), 0.90));
-      tailGrad.addColorStop(cfg.rootZonePct, rgbToRgba(darkenRgb(basePigment, 0.94), 0.90));
-      tailGrad.addColorStop(0.48, isLight ? "rgba(235, 226, 210, 0.90)" : rgbToRgba(darkenRgb([216, 208, 196], koiExposure), 0.90));
-      tailGrad.addColorStop(0.82, isLight ? "rgba(224, 214, 196, 0.90)" : rgbToRgba(darkenRgb([182, 174, 162], koiExposure), 0.90));
-      tailGrad.addColorStop(1.0, isLight ? "rgba(212, 200, 180, 0.90)" : rgbToRgba(darkenRgb([148, 140, 128], koiExposure), 0.90));
+      tailGrad.addColorStop(0.0, rgbToRgba(darkenRgb(basePigment, 0.92), 0.78));
+      tailGrad.addColorStop(cfg.rootZonePct, rgbToRgba(darkenRgb(basePigment, 0.96), 0.72));
+      tailGrad.addColorStop(0.52, isLight ? "rgba(232, 224, 208, 0.64)" : "rgba(196, 188, 174, 0.56)");
+      tailGrad.addColorStop(1.0, isLight ? "rgba(226, 218, 200, 0.42)" : "rgba(164, 158, 146, 0.34)");
     } else {
       tailGrad.addColorStop(0.0, rgbToRgba(darkenRgb(basePigment, 0.92), 0.90));
       tailGrad.addColorStop(cfg.rootZonePct, rgbToRgba(darkenRgb(basePigment, 0.95), 0.90));
@@ -5253,32 +5434,17 @@ export class KoiPondRenderer {
     ctx.fillStyle = tailGrad;
     ctx.fill();
 
-    // 2b. Outer membrane contour stroke
-    ctx.lineWidth = style === "sumie" ? 1.6 : 1.25;
+    // 2b. Outer membrane contour stroke (delicate fading ink edge in Sumi-e)
+    ctx.lineWidth = style === "sumie" ? 0.85 : 1.25;
     ctx.strokeStyle =
       style === "sumie"
         ? isLight
-          ? "rgba(22, 18, 16, 0.82)"
-          : "rgba(235, 225, 210, 0.75)"
+          ? "rgba(38, 34, 30, 0.34)"
+          : "rgba(212, 204, 190, 0.34)"
         : isLight
           ? "rgba(62, 44, 26, 0.70)"
           : "rgba(215, 195, 160, 0.60)";
     ctx.stroke();
-
-    // 2c. In Sumi-e style, emphasize outer flank rays with calligraphic ink stroke
-    if (style === "sumie") {
-      ctx.beginPath();
-      ctx.moveTo(fin.flankX0[0], fin.flankY0[0]);
-      ctx.quadraticCurveTo(fin.flankCtrlX[0], fin.flankCtrlY[0], fin.flankX1[0], fin.flankY1[0]);
-      ctx.quadraticCurveTo(fin.flankCtrlX[1], fin.flankCtrlY[1], fin.tipX[0], fin.tipY[0]);
-
-      ctx.moveTo(fin.tipX[tc - 1], fin.tipY[tc - 1]);
-      ctx.quadraticCurveTo(fin.flankCtrlX[2], fin.flankCtrlY[2], fin.flankX1[2], fin.flankY1[2]);
-      ctx.quadraticCurveTo(fin.flankCtrlX[3], fin.flankCtrlY[3], fin.flankX1[3], fin.flankY1[3]);
-      ctx.lineWidth = 2.4;
-      ctx.strokeStyle = isLight ? "rgba(18, 16, 14, 0.90)" : "rgba(240, 230, 215, 0.85)";
-      ctx.stroke();
-    }
 
     // 3. High-definition radiating & bifurcating rays strictly clipped to membrane
     const rayStrokeRgb: [number, number, number] =
@@ -6648,6 +6814,14 @@ export class KoiPondRenderer {
     if (!pCtx) return canvas;
     pCtx.clearRect(0, 0, w, h);
 
+    // Sumi-e: 4–5 tonal-tier wet-on-wet background lotus pad mosaic settling into paper tooth
+    if ((style as KoiArtStyle) === "sumie") {
+      const paper = this.ensureSumiePaperBundle(w, h, isLight);
+      const mosaic = bakeSumieWashMosaic(w, h, isLight, paper.tooth, paper.toothW, paper.toothH);
+      pCtx.drawImage(mosaic, 0, 0, w, h);
+      return canvas;
+    }
+
     // 1. Deep Riverbed Silt & Sediment Base
     pCtx.fillStyle =
       style === "sumie"
@@ -7391,6 +7565,7 @@ export class KoiPondRenderer {
     isLight: boolean,
     style: KoiArtStyle
   ): void {
+    if ((style as KoiArtStyle) === "sumie") return;
     if (false) return;
     const unit = koiClamp(Math.min(worldW, worldH) / 860, 0.48, 1.22);
 
@@ -9320,6 +9495,7 @@ export class KoiPondRenderer {
     isLight: boolean,
     style: KoiArtStyle
   ): void {
+    if ((style as KoiArtStyle) === "sumie") return;
     if (false) return;
     const unit = koiClamp(Math.min(worldW, worldH) / 860, 0.48, 1.25);
     const daylight = this.getDaylightFactor();
@@ -9612,6 +9788,7 @@ export class KoiPondRenderer {
     style: KoiArtStyle,
     skipPhysics = false
   ): void {
+    if ((style as KoiArtStyle) === "sumie") return;
     const unit = koiClamp(Math.min(worldW, worldH) / 860, 0.48, 1.25);
     this.ensureSakuraBotanicalSprites(unit, isLight, style);
 
@@ -9933,6 +10110,7 @@ export class KoiPondRenderer {
       this.fillExactKoiShadowSilhouette(sCtx, world.koi[i], koiShX, koiShY);
     }
 
+    if (style !== "sumie") {
     const lotusPads = this.getResolvedLotusPads(worldW, worldH, unit);
     for (let i = 0; i < lotusPads.length; i++) {
       const lp = lotusPads[i];
@@ -9958,6 +10136,7 @@ export class KoiPondRenderer {
       sCtx.beginPath();
       sCtx.arc(cp.x + swayX + compShX, cp.y + swayY + compShY, cp.r * 0.95, 0, Math.PI * 2);
       sCtx.fill();
+    }
     }
     sCtx.restore();
 
@@ -9994,7 +10173,7 @@ export class KoiPondRenderer {
     isLight: boolean,
     style: KoiArtStyle
   ): void {
-    if (false) return;
+    if ((style as KoiArtStyle) === "sumie") return;
 
     const w = Math.max(64, Math.round(worldW));
     const h = Math.max(64, Math.round(worldH));
@@ -10175,6 +10354,154 @@ export class KoiPondRenderer {
 
     const unit = koiClamp(Math.min(worldW, worldH) / 860, 0.46, 1.22);
 
+    if ((style as KoiArtStyle) === "sumie") {
+      const daylight = this.getDaylightFactor();
+      const quantUnit = Math.round(unit * 40) / 40;
+      const useLight = daylight >= 0.5;
+
+      // 1. Soft mid-grey wash backing patches + bigger individual 5-petal flowers
+      //    that displace individually when clicked!
+      const clusterSpecs = [
+        { fx: 0.12, fy: 0.82, r: 66, seed: 11, count: 16 },
+        { fx: 0.25, fy: 0.87, r: 52, seed: 23, count: 12 },
+        { fx: 0.80, fy: 0.12, r: 70, seed: 37, count: 16 },
+        { fx: 0.91, fy: 0.30, r: 44, seed: 53, count: 10 },
+      ];
+      if (this.sumieFlowers.length === 0) {
+        for (let c = 0; c < clusterSpecs.length; c++) {
+          const cs = clusterSpecs[c];
+          for (let f = 0; f < cs.count; f++) {
+            const fa = (f / cs.count) * Math.PI * 2 + (hash2D(cs.seed, f * 3, 733) - 0.5) * 0.65;
+            const fd = (0.14 + Math.sqrt(hash2D(cs.seed, f * 5 + 1, 733)) * 0.84) * (cs.r / 860);
+            this.sumieFlowers.push({
+              fx: cs.fx + Math.cos(fa) * fd * 0.72,
+              fy: cs.fy + Math.sin(fa) * fd * 1.12,
+              ox: 0,
+              oy: 0,
+              vx: 0,
+              vy: 0,
+              rot: hash2D(cs.seed, f * 11 + 3, 733) * Math.PI * 2,
+              vrot: 0,
+              sizeIdx: f % 4,
+              phase: hash2D(cs.seed, f * 13 + 7, 739) * Math.PI * 2,
+            });
+          }
+        }
+      }
+
+      // Draw cached soft mid-grey wash backing patches
+      const getBackings = (lightFlag: boolean) => {
+        const ck = `${quantUnit}:${lightFlag ? "L" : "D"}:sumie-backings-v2`;
+        let arr = this.sumieClusterCache.get(ck);
+        if (!arr) {
+          if (this.sumieClusterCache.size >= 4) this.sumieClusterCache.clear();
+          arr = clusterSpecs.map((cs) =>
+            bakeSumieWashBackingSprite(cs.r * quantUnit, lightFlag, cs.seed)
+          );
+          this.sumieClusterCache.set(ck, arr);
+        }
+        return arr;
+      };
+      const getSingleFlowers = (lightFlag: boolean) => {
+        const fk = `${quantUnit}:${lightFlag ? "L" : "D"}:sumie-flowers-v2`;
+        let arr = this.sumieSingleFlowerCache.get(fk);
+        if (!arr) {
+          if (this.sumieSingleFlowerCache.size >= 4) this.sumieSingleFlowerCache.clear();
+          // Bigger individual 5-petal flowers (~14px to 23px diameter)
+          arr = [7.2, 8.6, 10.0, 11.4].map((rad) =>
+            bakeSumieSingleFlowerSprite(rad * quantUnit, lightFlag)
+          );
+          this.sumieSingleFlowerCache.set(fk, arr);
+        }
+        return arr;
+      };
+
+      const backings = getBackings(useLight);
+      const flowerSprites = getSingleFlowers(useLight);
+      ctx.save();
+      for (let c = 0; c < clusterSpecs.length; c++) {
+        const cs = clusterSpecs[c];
+        const spr = backings[c];
+        ctx.drawImage(spr, worldW * cs.fx - spr.width * 0.5, worldH * cs.fy - spr.height * 0.5);
+      }
+
+      // Step individual flower physics (water drag, gentle spring return, click-ripple wave push)
+      const dt = this.sumieFlowersLastTime < 0 ? 1 / 60 : Math.min(0.05, Math.max(0.001, time - this.sumieFlowersLastTime));
+      this.sumieFlowersLastTime = time;
+      const drag = Math.exp(-2.15 * dt);
+      const rotDrag = Math.exp(-2.4 * dt);
+
+      for (let i = 0; i < this.sumieFlowers.length; i++) {
+        const fl = this.sumieFlowers[i];
+        const baseX = worldW * fl.fx;
+        const baseY = worldH * fl.fy;
+        const curX = baseX + fl.ox;
+        const curY = baseY + fl.oy;
+
+        // Wave-front push as click ripples sweep past each individual flower
+        for (let ri = 0; ri < this.clickRipples.length; ri++) {
+          const rip = this.clickRipples[ri];
+          const dx = curX - rip.x;
+          const dy = curY - rip.y;
+          const d = Math.hypot(dx, dy) || 1;
+          const band = Math.exp(-Math.pow((d - rip.radius) / (24 * unit), 2));
+          if (band > 0.08) {
+            const accel = band * rip.strength * 85 * unit;
+            fl.vx += (dx / d) * accel * dt;
+            fl.vy += (dy / d) * accel * dt;
+            fl.vrot += ((i % 2 === 0 ? 1 : -1) * 1.4 * band * rip.strength) * dt;
+          }
+        }
+
+        // Gentle spring back toward cluster home + viscous water damping
+        fl.vx += -fl.ox * 0.42 * dt;
+        fl.vy += -fl.oy * 0.42 * dt;
+        fl.vx *= drag;
+        fl.vy *= drag;
+        fl.ox += fl.vx * dt;
+        fl.oy += fl.vy * dt;
+        fl.vrot *= rotDrag;
+        fl.rot += fl.vrot * dt;
+
+        const driftX = Math.sin(time * 0.45 + fl.phase) * 2.2 * unit;
+        const driftY = Math.cos(time * 0.38 + fl.phase * 1.3) * 1.8 * unit;
+        const spr = flowerSprites[fl.sizeIdx];
+        ctx.save();
+        ctx.translate(baseX + fl.ox + driftX, baseY + fl.oy + driftY);
+        ctx.rotate(fl.rot + Math.sin(time * 0.3 + fl.phase) * 0.08);
+        ctx.drawImage(spr, -spr.width * 0.5, -spr.height * 0.5);
+        ctx.restore();
+      }
+
+      // 2. Cached 5-7 lobed dark-ink maple leaves (larger: ~46-68px across, zero cast shadow)
+      const getMaples = (lightFlag: boolean) => {
+        const mk = `${quantUnit}:${lightFlag ? "L" : "D"}:sumie-maples-v2`;
+        let arr = this.sumieMapleCache.get(mk);
+        if (!arr) {
+          if (this.sumieMapleCache.size >= 4) this.sumieMapleCache.clear();
+          arr = [0, 1, 2, 3, 4, 5].map((v) =>
+            bakeSumieMapleSprite((23 + (v % 3) * 5.2) * quantUnit, lightFlag, v)
+          );
+          this.sumieMapleCache.set(mk, arr);
+        }
+        return arr;
+      };
+      const mapleSprites = getMaples(useLight);
+      const liveMaples = this.getLiveMapleLeafPositions(worldW, worldH, unit, time);
+      for (let m = 0; m < liveMaples.length; m++) {
+        const cm = liveMaples[m];
+        const spr = mapleSprites[m % mapleSprites.length];
+        ctx.save();
+        ctx.translate(cm.x, cm.y);
+        ctx.rotate(cm.rot);
+        ctx.globalAlpha = cm.under ? 0.84 : 0.96;
+        ctx.drawImage(spr, -spr.width * 0.5, -spr.height * 0.5);
+        ctx.restore();
+      }
+      ctx.restore();
+      return;
+    }
+
     ctx.save();
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -10315,7 +10642,7 @@ export class KoiPondRenderer {
     isLight: boolean,
     style: KoiArtStyle
   ): void {
-    if (false) return;
+    if ((style as KoiArtStyle) === "sumie") return;
 
     const unit = koiClamp(Math.min(worldW, worldH) / 860, 0.48, 1.22);
     ctx.save();
@@ -10676,6 +11003,7 @@ export class KoiPondRenderer {
     style: KoiArtStyle,
     skipPhysics: boolean
   ): void {
+    if ((style as KoiArtStyle) === "sumie") return;
     const dfFactor = this.getDaytimeDragonflyFactor();
     const hNow = KoiPondRenderer.normalizeHours(this.timeOfDayHours);
     const isDuskDepart = hNow >= 15.65 || hNow < 5.75;
@@ -11365,6 +11693,7 @@ export class KoiPondRenderer {
     isLight: boolean,
     style: KoiArtStyle
   ): void {
+    if ((style as KoiArtStyle) === "sumie") return;
     const fireflyFactor = this.getEveningFireflyFactor();
     if (fireflyFactor <= 0.005) return;
 
@@ -11737,6 +12066,258 @@ export class KoiPondRenderer {
     ctx.restore();
   }
 
+  /**
+   * Pre-bakes 3 size-tiered DOF-blurred airborne sakura petal sprites (each with a `near` 100%-size
+   * heavier bokeh blur and a `far` 80%-size slightly sharper blur) per `(quantUnit, isLight, style)`
+   * so `paintAirborneDofSakuraPetals` runs at 60 FPS with zero per-frame `ctx.filter` cost.
+   */
+  private ensureDofSakuraSprites(
+    unit: number,
+    isLight: boolean,
+    style: KoiArtStyle
+  ): Array<{ near: HTMLCanvasElement; far: HTMLCanvasElement }> {
+    const quantUnit = Math.round(unit * 40) / 40;
+    const key = `${quantUnit}:${isLight ? "L" : "D"}:${style}:dof-sakura-v6`;
+    const cached = this.dofSakuraCache.get(key);
+    if (cached) return cached;
+    if (this.dofSakuraCache.size >= 8) this.dofSakuraCache.clear();
+
+    const tiers = [
+      { len: 28 * quantUnit, nearBlur: 2.4 * quantUnit, farBlur: 1.05 * quantUnit },
+      { len: 46 * quantUnit, nearBlur: 4.6 * quantUnit, farBlur: 2.3 * quantUnit },
+      { len: 72 * quantUnit, nearBlur: 7.8 * quantUnit, farBlur: 4.2 * quantUnit },
+    ];
+
+    const bakeOne = (pLen: number, blurPx: number): HTMLCanvasElement => {
+      const pW = pLen * 0.66;
+      const pad = Math.ceil(blurPx * 3.0 + 10);
+      const cw = Math.ceil(pLen + pad * 2);
+      const ch = Math.ceil(pW * 2.0 + pad * 2);
+      const c = document.createElement("canvas");
+      c.width = cw;
+      c.height = ch;
+      const g = c.getContext("2d");
+      if (!g) return c;
+
+      g.save();
+      g.translate(pad, ch * 0.5);
+      if (blurPx > 0.2) {
+        g.filter = `blur(${blurPx.toFixed(2)}px)`;
+      }
+
+      // Authentic notched sakura petal silhouette along +X
+      g.beginPath();
+      g.moveTo(0, 0);
+      g.bezierCurveTo(pLen * 0.24, -pW * 0.94, pLen * 0.78, -pW * 0.88, pLen, -pW * 0.19);
+      g.quadraticCurveTo(pLen * 0.89, -pW * 0.05, pLen * 0.82, 0);
+      g.quadraticCurveTo(pLen * 0.89, pW * 0.05, pLen, pW * 0.19);
+      g.bezierCurveTo(pLen * 0.78, pW * 0.88, pLen * 0.24, pW * 0.94, 0, 0);
+      g.closePath();
+
+      const grad = g.createLinearGradient(0, 0, pLen, 0);
+      if (style === "sumie") {
+        if (isLight) {
+          // Pure monochrome wet-on-wet ink wash sakura petal (charcoal base -> warm cream reserved-paper tip)
+          grad.addColorStop(0.0, "rgba(38, 35, 31, 1.0)");
+          grad.addColorStop(0.45, "rgba(128, 121, 110, 1.0)");
+          grad.addColorStop(1.0, "rgba(236, 228, 212, 1.0)");
+        } else {
+          // Night Sumi-e: inverted silver-grey ink wash petal
+          grad.addColorStop(0.0, "rgba(116, 110, 100, 1.0)");
+          grad.addColorStop(0.50, "rgba(186, 179, 166, 1.0)");
+          grad.addColorStop(1.0, "rgba(228, 221, 208, 1.0)");
+        }
+      } else {
+        if (isLight) {
+          // Mokkotsu Day: lush watercolor blush-pink sakura petal
+          grad.addColorStop(0.0, "rgba(214, 68, 112, 1.0)");
+          grad.addColorStop(0.48, "rgba(248, 158, 188, 1.0)");
+          grad.addColorStop(1.0, "rgba(255, 242, 247, 1.0)");
+        } else {
+          // Mokkotsu Night: softly moonlit lavender-blush sakura petal
+          grad.addColorStop(0.0, "rgba(124, 76, 112, 1.0)");
+          grad.addColorStop(0.50, "rgba(182, 154, 188, 1.0)");
+          grad.addColorStop(1.0, "rgba(224, 212, 234, 1.0)");
+        }
+      }
+      g.fillStyle = grad;
+      g.fill();
+      // Second fill pass reinforces bokeh core opacity without hardening the Gaussian blurred rim
+      g.fill();
+
+      // Delicate central petal vein hint
+      g.beginPath();
+      g.moveTo(pLen * 0.14, 0);
+      g.lineTo(pLen * 0.72, 0);
+      g.lineWidth = Math.max(0.6, pLen * 0.022);
+      g.strokeStyle =
+        style === "sumie"
+          ? isLight
+            ? "rgba(32, 29, 26, 0.24)"
+            : "rgba(232, 224, 210, 0.24)"
+          : isLight
+            ? "rgba(202, 68, 108, 0.22)"
+            : "rgba(230, 214, 240, 0.20)";
+      g.stroke();
+
+      g.filter = "none";
+      g.restore();
+      return c;
+    };
+
+    const sprites = tiers.map((t) => ({
+      near: bakeOne(t.len, t.nearBlur),
+      far: bakeOne(t.len, t.farBlur),
+    }));
+    this.dofSakuraCache.set(key, sprites);
+    return sprites;
+  }
+
+  /**
+   * Renders at most 3 airborne DOF-blurred sakura petals (1 Small, 1 Medium, 1 Large) drifting
+   * diagonally on the wind from the outer edges of the top-right triangle toward the outer edges
+   * of the bottom-left triangle, shrinking 100% -> 80% and subtly sharpening as they fall.
+   * Purely deterministic in `time` so Mokkotsu and Sumi-e stay pixel-aligned during fluid swaps.
+   */
+  private paintAirborneDofSakuraPetals(
+    ctx: CanvasRenderingContext2D,
+    worldW: number,
+    worldH: number,
+    time: number,
+    style: KoiArtStyle
+  ): void {
+    const unit = koiClamp(Math.min(worldW, worldH) / 860, 0.48, 1.22);
+    const daylight = this.getDaylightFactor();
+    const daySprites = this.ensureDofSakuraSprites(unit, true, style);
+    const nightSprites = daylight < 0.998 ? this.ensureDofSakuraSprites(unit, false, style) : daySprites;
+
+    // 3 size tiers: Small (slower, 3.8..5.0s), Medium (2.8..4.0s), Large (2.1..3.2s)
+    // Each tier has a 1..3s quiet pause between exit and next entry; initial phases are staggered
+    // so petals appear organically (1 to 3 visible at once, never a shower).
+    const tierCfg = [
+      { minDrift: 3.8, maxDrift: 5.0, initDelay: 0.4, seed: 101, baseAlpha: 1.0 },
+      { minDrift: 2.9, maxDrift: 4.1, initDelay: 2.1, seed: 223, baseAlpha: 0.98 },
+      { minDrift: 2.1, maxDrift: 3.3, initDelay: 3.7, seed: 359, baseAlpha: 0.96 },
+    ];
+
+    const flashActive = daylight < 0.85 && this.flashlightDispersal < 0.98;
+    const flashRadius = this.getFlashlightBaseRadius(worldW, worldH) * 0.95;
+
+    ctx.save();
+    for (let tier = 0; tier < 3; tier++) {
+      const cfg = tierCfg[tier];
+      const tLocal = time - cfg.initDelay;
+      if (tLocal < 0) continue;
+
+      // Deterministic cycle finder (each cycle = drift [2..5s] + pause [1..3s], avg ~5.2s)
+      // Use a constant-time approximate cycle index + bounded walk so cost is O(1) even after hours
+      const slotPeriod = (cfg.minDrift + cfg.maxDrift) * 0.5 + 2.0;
+      const cycleIdx = Math.floor(tLocal / slotPeriod);
+      const tInSlot = tLocal - cycleIdx * slotPeriod;
+
+      // Per-cycle deterministic drift duration (strictly within 2..5s) & pause (1..3s)
+      const hDrift = hash2D(cycleIdx, tier * 7 + 1, cfg.seed);
+      const hPause = hash2D(cycleIdx, tier * 7 + 2, cfg.seed);
+      const driftDur = cfg.minDrift + hDrift * (cfg.maxDrift - cfg.minDrift);
+      const pauseDur = 1.0 + hPause * 2.0;
+      // Scale slot cleanly so active window is driftDur / (driftDur + pauseDur) of slotPeriod
+      const activeDur = Math.min(driftDur, slotPeriod * (driftDur / (driftDur + pauseDur)));
+      if (tInSlot > activeDur) continue; // quiet gap before next petal enters
+
+      const u = koiClamp(tInSlot / Math.max(0.1, activeDur), 0, 1);
+
+      // Compute off-screen entry on the outer edges of the top-right triangle
+      // and off-screen exit on the outer edges of the bottom-left triangle
+      const margin = (54 + tier * 26) * unit;
+      const hSide = hash2D(cycleIdx, tier * 11 + 3, cfg.seed);
+      const hPos = hash2D(cycleIdx, tier * 11 + 4, cfg.seed);
+      const hAngle = (hash2D(cycleIdx, tier * 11 + 5, cfg.seed) - 0.5) * 0.22;
+
+      let startX: number;
+      let startY: number;
+      if (hSide < 0.52) {
+        // Enter along the TOP edge (top-right triangle: x in 32%..102% of width)
+        startX = worldW * (0.32 + hPos * 0.70);
+        startY = -margin;
+      } else {
+        // Enter along the RIGHT edge (top-right triangle: y in -2%..66% of height)
+        startX = worldW + margin;
+        startY = worldH * (-0.02 + hPos * 0.68);
+      }
+
+      // Diagonal wind vector heading down-left (approx 135 deg in screen coords, tilted to viewport aspect)
+      const baseAngle = Math.atan2(worldH, -worldW) + hAngle;
+      const dirX = Math.cos(baseAngle); // < 0
+      const dirY = Math.sin(baseAngle); // > 0
+
+      // Exact ray intersection with left edge (-margin) and bottom edge (worldH + margin)
+      const tLeft = (-margin - startX) / Math.min(-0.05, dirX);
+      const tBottom = (worldH + margin - startY) / Math.max(0.05, dirY);
+      const travelDist = Math.min(tLeft, tBottom);
+
+      // Gentle sinusoidal wind sway perpendicular to diagonal path
+      const swayFreq = 1.6 + hash2D(cycleIdx, tier * 13 + 6, cfg.seed) * 1.1;
+      const swayPhase = hash2D(cycleIdx, tier * 13 + 7, cfg.seed) * Math.PI * 2;
+      const swayAmp = (14 + tier * 10) * unit;
+      const sway = Math.sin(u * Math.PI * swayFreq + swayPhase) * swayAmp * Math.sin(u * Math.PI);
+
+      const perpX = -dirY;
+      const perpY = dirX;
+      const px = startX + dirX * (travelDist * u) + perpX * sway;
+      const py = startY + dirY * (travelDist * u) + perpY * sway;
+
+      // Shrink smoothly from 100% size at entry to 80% size at exit (simulating falling toward pond)
+      const fallScale = 1.0 - 0.20 * u;
+      // Organic flutter tumble & rotation
+      const rot0 = hash2D(cycleIdx, tier * 17 + 8, cfg.seed) * Math.PI * 2;
+      const spinRate = (hash2D(cycleIdx, tier * 17 + 9, cfg.seed) > 0.5 ? 1 : -1) * (1.4 + hash2D(cycleIdx, tier * 17 + 10, cfg.seed) * 1.6);
+      const rot = rot0 + u * spinRate;
+      const tumbleY = 0.64 + 0.36 * Math.abs(Math.cos(u * Math.PI * (1.8 + tier * 0.35) + swayPhase));
+
+      // Night moonlight opacity + subtle brightening near active lantern beam
+      let nightBoost = 0;
+      if (flashActive) {
+        const fd = Math.hypot(px - this.flashX, py - this.flashY);
+        if (fd < flashRadius) {
+          nightBoost = (1.0 - fd / flashRadius) * (1.0 - this.flashlightDispersal) * 0.28;
+        }
+      }
+      const alpha = koiClamp(cfg.baseAlpha * koiLerp(0.84 + nightBoost, 1.0, daylight), 0.25, 1.0);
+
+      // Subtle blur sharpening as petal falls: cross-fade `near` (heavier bokeh) -> `far` (crisper)
+      const nearWeight = 1.0 - u * 0.85;
+      const farWeight = u * 0.85;
+
+      const drawPair = (pair: { near: HTMLCanvasElement; far: HTMLCanvasElement }, layerAlpha: number) => {
+        if (layerAlpha <= 0.005) return;
+        if (nearWeight > 0.01) {
+          ctx.globalAlpha = layerAlpha * nearWeight;
+          ctx.drawImage(pair.near, -pair.near.width * 0.5, -pair.near.height * 0.5);
+        }
+        if (farWeight > 0.01) {
+          ctx.globalAlpha = layerAlpha * farWeight;
+          ctx.drawImage(pair.far, -pair.far.width * 0.5, -pair.far.height * 0.5);
+        }
+      };
+
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(rot);
+      ctx.scale(fallScale, fallScale * tumbleY);
+
+      if (daylight >= 0.998) {
+        drawPair(daySprites[tier], alpha);
+      } else if (daylight <= 0.002) {
+        drawPair(nightSprites[tier], alpha);
+      } else {
+        drawPair(daySprites[tier], alpha * daylight);
+        drawPair(nightSprites[tier], alpha * (1.0 - daylight));
+      }
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
   public render(
     ctx: CanvasRenderingContext2D,
     width: number,
@@ -11851,6 +12432,9 @@ export class KoiPondRenderer {
       isLight,
       this.artStyle
     );
+
+    // 8. Foreground Airborne DOF-Blurred Sakura Petals (max 3 of different sizes, top-right -> bottom-left, 100% -> 80% scale)
+    this.paintAirborneDofSakuraPetals(ctx, effW, effH, time, this.artStyle);
     ctx.restore();
 
     // When the Profile Menu opens, blur the pond background instead of blanking it,
