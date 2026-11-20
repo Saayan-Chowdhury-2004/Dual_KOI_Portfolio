@@ -1,5 +1,5 @@
 import { FluidMaskEngine } from "./fluidMaskEngine";
-import { IDLE_SCROLL_URI } from "./koi/columnArtData";
+import { IDLE_SCROLL_BODY_URI, IDLE_SCROLL_ROLLER_URI } from "./koi/columnArtData";
 import { KoiPondEngine } from "./koi/engine";
 import type { PortfolioLayerId, SharedPortfolioState } from "./sharedState";
 
@@ -15,7 +15,7 @@ const KOI_FLUID_STYLE_ID = "koi-fluid-ink-style-styles";
 const DEFAULT_MOKKOTSU_CONTRAST = 1.2;
 const DEFAULT_SUMIE_CONTRAST = 1.0;
 const DEFAULT_BTN_RADIUS_PCT = 16;
-const DEFAULT_BTN_SIZE_PX = 59;
+const DEFAULT_BTN_SIZE_PX = 79;
 const DEFAULT_BTN_SHADOW_SIZE_PX = 14;
 const DEFAULT_BTN_SHADOW_OPACITY = 0.67;
 const DEFAULT_IDLE_SCROLL_WIDTH_PX = 445;
@@ -29,6 +29,7 @@ export class KoiFluidApp {
   private fluidCanvas: HTMLCanvasElement;
   private idleCurtainEl: HTMLElement | null = null;
   private idleCurtainTimer: number | null = null;
+  private idleCurtainOpenTimer: number | null = null;
   private idleCurtainDismissTimer: number | null = null;
   private hasUserDragged = false;
 
@@ -167,25 +168,36 @@ export class KoiFluidApp {
   private showIdleDragCurtain(): void {
     if (this.disposed || this.hasUserDragged || this.activeStyle === "sumie") return;
 
+    if (this.idleCurtainOpenTimer !== null) {
+      window.clearTimeout(this.idleCurtainOpenTimer);
+      this.idleCurtainOpenTimer = null;
+    }
     if (this.idleCurtainDismissTimer !== null) {
       window.clearTimeout(this.idleCurtainDismissTimer);
       this.idleCurtainDismissTimer = null;
     }
-
-    if (this.idleCurtainEl) {
-      this.idleCurtainEl.classList.remove("idc-dismissed");
-      this.idleCurtainEl.classList.add("idc-visible");
-      return;
+    if (this.idleCurtainOpenTimer !== null) {
+      window.clearTimeout(this.idleCurtainOpenTimer);
+      this.idleCurtainOpenTimer = null;
     }
+
+    if (this.idleCurtainEl) return;
 
     const curtain = document.createElement("div");
     curtain.id = "idle-drag-curtain";
     curtain.setAttribute("aria-live", "polite");
     curtain.innerHTML = `
-      <div class="idc-scroll" role="button" tabindex="0" aria-label="Click drag on screen — click to dismiss">
-        <img class="idc-scroll-img" src="${IDLE_SCROLL_URI}" alt="" draggable="false" />
-        <div class="idc-scroll-text-area" role="status">
-          <span class="idc-label">Click drag on screen</span>
+      <div class="idc-scroll" role="button" tabindex="0" aria-label="Click and drag on the Koi pond. Click to dismiss.">
+        <div class="idc-scroll-roller">
+          <img class="idc-scroll-roller-img" src="${IDLE_SCROLL_ROLLER_URI}" alt="" draggable="false" />
+        </div>
+        <div class="idc-scroll-body-clip">
+          <div class="idc-scroll-body-inner">
+            <img class="idc-scroll-body-img" src="${IDLE_SCROLL_BODY_URI}" alt="" draggable="false" />
+            <div class="idc-scroll-text-area" role="status">
+              <span class="idc-label">Click and drag on the Koi pond.</span>
+            </div>
+          </div>
         </div>
       </div>
     `;
@@ -206,13 +218,20 @@ export class KoiFluidApp {
     this.stageEl.appendChild(curtain);
     this.idleCurtainEl = curtain;
 
-    // Force initial off-bottom transform paint before transitioning up
+    // Step 1: Pop in closed scroll roller from bottom edge at 445px reference scale
     void curtain.offsetWidth;
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        if (this.idleCurtainEl === curtain && !this.hasUserDragged) {
-          curtain.classList.add("idc-visible");
-        }
+        if (this.idleCurtainEl !== curtain || this.hasUserDragged) return;
+        curtain.classList.add("idc-popped");
+
+        // Step 2: Simultaneously shrink by 10%, unroll parchment, and shift horizontally into center
+        this.idleCurtainOpenTimer = window.setTimeout(() => {
+          this.idleCurtainOpenTimer = null;
+          if (this.idleCurtainEl === curtain && !this.hasUserDragged) {
+            curtain.classList.add("idc-opened");
+          }
+        }, 360);
       });
     });
   }
@@ -222,11 +241,17 @@ export class KoiFluidApp {
       window.clearTimeout(this.idleCurtainTimer);
       this.idleCurtainTimer = null;
     }
+    if (this.idleCurtainOpenTimer !== null) {
+      window.clearTimeout(this.idleCurtainOpenTimer);
+      this.idleCurtainOpenTimer = null;
+    }
 
     const curtain = this.idleCurtainEl;
     if (!curtain) return;
 
-    curtain.classList.remove("idc-visible");
+    // Roll back closed and pop off the bottom edge
+    curtain.classList.remove("idc-opened");
+    curtain.classList.remove("idc-popped");
     curtain.classList.add("idc-dismissed");
     this.idleCurtainEl = null;
 
@@ -236,7 +261,7 @@ export class KoiFluidApp {
     this.idleCurtainDismissTimer = window.setTimeout(() => {
       this.idleCurtainDismissTimer = null;
       curtain.remove();
-    }, 460);
+    }, 520);
   }
 
   private handleUserDragDetected(): void {
@@ -473,8 +498,12 @@ export class KoiFluidApp {
         filter: contrast(var(--koi-fluid-contrast, 1.20));
       }
 
-      /* 10-second idle bottom-edge scroll cue */
+      /* 10-second idle bottom-edge unrolling scroll cue */
       #idle-drag-curtain {
+        --scroll-full-w: min(445px, 92vw);
+        --scroll-h: calc(var(--scroll-full-w) * 213 / 785);
+        --scroll-roller-w: calc(var(--scroll-full-w) * 66 / 785);
+        --scroll-body-w: calc(var(--scroll-full-w) * 721 / 785);
         position: absolute;
         left: 0;
         right: 0;
@@ -491,70 +520,127 @@ export class KoiFluidApp {
 
       .idc-scroll {
         position: relative;
-        width: min(445px, 92vw);
-        aspect-ratio: 785 / 213;
+        display: inline-flex;
+        align-items: stretch;
+        height: var(--scroll-h);
         pointer-events: auto;
         cursor: pointer;
-        transform: translate3d(0, calc(100% + 52px), 0);
+        transform-origin: center bottom;
+        transform: translate3d(0, calc(100% + 56px), 0) scale(1);
         opacity: 0;
         will-change: transform, opacity;
         transition:
-          transform 520ms cubic-bezier(0.22, 1.12, 0.36, 1),
-          opacity 340ms ease-out;
+          transform 380ms cubic-bezier(0.22, 1.12, 0.36, 1),
+          opacity 280ms ease-out;
         filter: drop-shadow(0 10px 22px rgba(10, 6, 2, 0.44));
         outline: none;
       }
 
-      #idle-drag-curtain.idc-visible .idc-scroll {
-        transform: translate3d(0, 0, 0);
+      /* Phase 1: Closed scroll roller pops in from bottom edge at 100% (445px scale) */
+      #idle-drag-curtain.idc-popped .idc-scroll {
+        transform: translate3d(0, 0, 0) scale(1);
         opacity: 1;
       }
 
+      /* Phase 2: Simultaneously shrinks by 10% while unrolling and shifting into center */
+      #idle-drag-curtain.idc-popped.idc-opened .idc-scroll {
+        transform: translate3d(0, 0, 0) scale(0.90);
+        transition:
+          transform 700ms cubic-bezier(0.22, 0.92, 0.28, 1),
+          opacity 280ms ease-out;
+      }
+
       #idle-drag-curtain.idc-dismissed .idc-scroll {
-        transform: translate3d(0, calc(100% + 52px), 0);
+        transform: translate3d(0, calc(100% + 56px), 0) scale(0.90);
         opacity: 0;
         pointer-events: none;
         transition:
-          transform 400ms cubic-bezier(0.55, 0.06, 0.68, 0.19),
-          opacity 300ms ease-in;
+          transform 440ms cubic-bezier(0.55, 0.06, 0.68, 0.19),
+          opacity 320ms ease-in;
       }
 
-      .idc-scroll-img {
+      .idc-scroll-roller {
+        position: relative;
+        z-index: 2;
+        width: var(--scroll-roller-w);
+        height: 100%;
+        flex-shrink: 0;
+      }
+
+      .idc-scroll-roller-img {
         width: 100%;
         height: 100%;
         display: block;
-        object-fit: contain;
         pointer-events: none;
         user-select: none;
         -webkit-user-drag: none;
       }
 
-      /* Centered strictly inside the scroll's inner cream parchment area */
+      /* Unrolling parchment clip: expands smoothly out from behind the roller's right edge */
+      .idc-scroll-body-clip {
+        position: relative;
+        z-index: 1;
+        width: 0;
+        height: 100%;
+        margin-left: calc(var(--scroll-full-w) * -2 / 785);
+        overflow: hidden;
+        flex-shrink: 0;
+        will-change: width;
+        transition: width 700ms cubic-bezier(0.22, 0.92, 0.28, 1);
+      }
+
+      #idle-drag-curtain.idc-opened .idc-scroll-body-clip {
+        width: var(--scroll-body-w);
+      }
+
+      #idle-drag-curtain.idc-dismissed .idc-scroll-body-clip {
+        width: 0;
+        transition: width 300ms cubic-bezier(0.55, 0.06, 0.68, 0.19);
+      }
+
+      /* Anchored right: 0 so the parchment physically unrolls out from behind the cylinder */
+      .idc-scroll-body-inner {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: var(--scroll-body-w);
+        height: 100%;
+      }
+
+      .idc-scroll-body-img {
+        width: 100%;
+        height: 100%;
+        display: block;
+        pointer-events: none;
+        user-select: none;
+        -webkit-user-drag: none;
+      }
+
+      /* Centered strictly inside the parchment window of the body slice */
       .idc-scroll-text-area {
         position: absolute;
-        left: 8.28%;
-        right: 4.33%;
+        left: 1.5%;
+        right: 4.8%;
         top: 13.15%;
         bottom: 18.78%;
         display: flex;
         align-items: center;
         justify-content: center;
         text-align: center;
-        padding: 0 3%;
+        padding: 0 2.5%;
         box-sizing: border-box;
         pointer-events: none;
       }
 
       .idc-label {
         font-family: "Cormorant Garamond", "EB Garamond", "Noto Serif JP", Georgia, serif;
-        font-size: calc(min(445px, 92vw) * 0.056);
+        font-size: calc(var(--scroll-full-w) * 0.045);
         font-weight: 700;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.05em;
         line-height: 1.1;
         color: #18100a;
         white-space: nowrap;
       }
-
     `;
     document.head.appendChild(style);
   }

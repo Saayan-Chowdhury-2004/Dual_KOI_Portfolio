@@ -1,5 +1,8 @@
 import {
+  ICON_FLASHLIGHT_OFF_URI,
   ICON_FLASHLIGHT_URI,
+  ICON_GITHUB_URI,
+  ICON_LINKEDIN_URI,
   ICON_MOON_URI,
   ICON_ONI_URI,
   ICON_SUN_URI,
@@ -13,7 +16,7 @@ import {
   type KoiArtStyleMeta,
 } from "./koiRenderer";
 import { DEFAULT_KOI_CONFIG, PondWorld } from "./pondWorld";
-import { extractSumieFloatingGlyphDataUrl } from "./sumieWash";
+import { bakeMizuhikiCoinDataUrl, MizuhikiCoinChain, type MizuhikiCoinVariant } from "./mizuhikiCoins";
 import type { KoiPondConfig, KoiSpec } from "./koiTypes";
 
 const STEP = 1 / 60;
@@ -36,11 +39,16 @@ export class KoiPondEngine {
   private toggleSunIconEl!: HTMLImageElement;
   private toggleMoonIconEl!: HTMLImageElement;
   private profileIconEl!: HTMLImageElement;
+  private githubIconEl!: HTMLImageElement;
+  private linkedinIconEl!: HTMLImageElement;
   private flashlightIconEl!: HTMLImageElement;
-  private sumieSunUri: string | null = null;
-  private sumieMoonUri: string | null = null;
-  private sumieOniUri: string | null = null;
-  private sumieFlashUri: string | null = null;
+  private flashlightOffIconEl!: HTMLImageElement;
+  private coinUris: Record<MizuhikiCoinVariant, Partial<Record<"sun" | "moon" | "oni" | "github" | "linkedin" | "flash" | "flashOff", string>>> = {
+    brass: {},
+    "sumie-day": {},
+    "sumie-night": {},
+  };
+  private mizuhikiChain: MizuhikiCoinChain | null = null;
   private profileBtn!: HTMLButtonElement;
   private flashlightBtn!: HTMLButtonElement;
 
@@ -347,6 +355,8 @@ export class KoiPondEngine {
     cancelAnimationFrame(this.raf);
     this.renderer.destroy();
     this.portfolioUI.destroy();
+    this.mizuhikiChain?.destroy();
+    this.mizuhikiChain = null;
     this.controlsEl.remove();
     this.resizeObserver.disconnect();
     this.intersectionObserver.disconnect();
@@ -390,53 +400,108 @@ export class KoiPondEngine {
     style.textContent = `
       #layer-koi .ms-floating-controls {
         position: absolute;
-        top: 24px;
-        right: 16px;
+        top: 0;
+        right: -10px;
         z-index: 50;
+        width: 173px;
+        padding-top: 42px;
+        padding-bottom: 76px;
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 12px;
+        gap: 15px;
         user-select: none;
         box-sizing: border-box;
+        pointer-events: none;
+      }
+
+      #layer-koi .ms-mizuhiki-svg {
+        position: absolute;
+        top: 0;
+        left: 0;
+        z-index: 3;
+        pointer-events: none;
+        overflow: visible;
+        filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.34));
       }
 
       #layer-koi .ms-ctrl-btn {
         appearance: none;
         position: relative;
-        width: var(--ctrl-btn-size, 59px);
-        height: var(--ctrl-btn-size, 59px);
+        z-index: 2;
+        width: var(--ctrl-btn-size, 79px);
+        height: var(--ctrl-btn-size, 79px);
         padding: 0;
         margin: 0;
         background: transparent;
         border: none;
         outline: none;
-        border-radius: var(--ctrl-btn-radius, 16%);
-        box-shadow:
-          0 calc(var(--ctrl-btn-shadow-size, 14px) * 0.48) var(--ctrl-btn-shadow-size, 14px) rgba(0, 0, 0, var(--ctrl-btn-shadow-opacity, 0.67)),
-          0 calc(var(--ctrl-btn-shadow-size, 14px) * 0.20) calc(var(--ctrl-btn-shadow-size, 14px) * 0.45) rgba(0, 0, 0, calc(var(--ctrl-btn-shadow-opacity, 0.67) * 0.68));
+        text-decoration: none;
+        border-radius: 50%;
+        box-shadow: none;
         cursor: pointer;
+        pointer-events: auto;
         display: flex;
         align-items: center;
         justify-content: center;
-        overflow: hidden;
+        overflow: visible;
         box-sizing: border-box;
-        transition: transform 140ms ease, box-shadow 140ms ease, filter 140ms ease, opacity 140ms ease;
+        transform-origin: 50% 50%;
+        transform-style: preserve-3d;
+        will-change: transform;
+        transition: filter 160ms ease, opacity 160ms ease;
       }
 
       #layer-koi .ms-ctrl-btn:hover,
       #layer-koi .ms-ctrl-btn:focus-visible {
         border: none;
         outline: none;
-        box-shadow:
-          0 calc(var(--ctrl-btn-shadow-size, 14px) * 0.56) calc(var(--ctrl-btn-shadow-size, 14px) * 1.15) rgba(0, 0, 0, min(1, calc(var(--ctrl-btn-shadow-opacity, 0.67) * 1.15))),
-          0 calc(var(--ctrl-btn-shadow-size, 14px) * 0.24) calc(var(--ctrl-btn-shadow-size, 14px) * 0.52) rgba(0, 0, 0, calc(var(--ctrl-btn-shadow-opacity, 0.67) * 0.78));
-        transform: translate3d(0, -1.5px, 0);
-        filter: brightness(1.07);
+        filter: brightness(1.08);
       }
 
       #layer-koi .ms-ctrl-btn--active {
         border: none;
+      }
+
+      /* True double-sided 3D coin flipper (180deg sideways rotateY) */
+      #layer-koi .ms-coin-flipper {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        transform-style: preserve-3d;
+        transition: transform 540ms cubic-bezier(0.30, 0.08, 0.22, 1);
+        pointer-events: none;
+      }
+
+      #layer-koi .ms-ctrl-btn--flipped .ms-coin-flipper {
+        transform: rotateY(180deg);
+      }
+
+      #layer-koi .ms-coin-face {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        backface-visibility: hidden;
+        -webkit-backface-visibility: hidden;
+        pointer-events: none;
+        transition: opacity 0ms linear 250ms;
+      }
+
+      #layer-koi .ms-coin-face--front {
+        opacity: 1;
+      }
+
+      #layer-koi .ms-coin-face--back {
+        transform: rotateY(180deg);
+        opacity: 0;
+      }
+
+      #layer-koi .ms-ctrl-btn--flipped .ms-coin-face--front {
+        opacity: 0;
+      }
+
+      #layer-koi .ms-ctrl-btn--flipped .ms-coin-face--back {
+        opacity: 1;
       }
 
       #layer-koi .ms-ctrl-icon {
@@ -444,15 +509,22 @@ export class KoiPondEngine {
         height: 100%;
         object-fit: cover;
         display: block;
-        border-radius: inherit;
+        border-radius: 50%;
         pointer-events: none;
         user-select: none;
+        filter:
+          drop-shadow(0 8px 12px rgba(0, 0, 0, 0.40))
+          drop-shadow(0 2px 4px rgba(0, 0, 0, 0.26));
       }
 
-      #layer-koi .ms-ctrl-icon--celestial {
+      #layer-koi .ms-coin-sheen {
         position: absolute;
         inset: 0;
-        will-change: transform, opacity;
+        border-radius: 50%;
+        pointer-events: none;
+        mix-blend-mode: screen;
+        opacity: 0.9;
+        transform: translateZ(1px);
       }
 
       #layer-koi .ms-ctrl-btn--sys-time::after {
@@ -460,42 +532,33 @@ export class KoiPondEngine {
         position: absolute;
         bottom: 6px;
         right: 6px;
-        width: 7px;
-        height: 7px;
+        width: 9px;
+        height: 9px;
         border-radius: 50%;
         background: radial-gradient(circle, #fff3c4 0%, #e6b44c 65%, #a8741c 100%);
-        box-shadow: 0 0 6px rgba(242, 196, 86, 0.85);
+        box-shadow: 0 0 7px rgba(242, 196, 86, 0.88);
         pointer-events: none;
+        z-index: 4;
+        transform: translateZ(2px);
+      }
+
+      #layer-koi .ms-ctrl-btn--flashlight {
+        z-index: 1;
       }
 
       #layer-koi .ms-ctrl-btn--flashlight-off {
-        opacity: 0.62;
-        filter: saturate(0.72) brightness(0.76);
-      }
-
-      /* Sumi-e Zen Ink Wash: floating transparent-background glyphs like kanji + red hanko seal */
-      #layer-koi .ms-floating-controls[data-art-style="sumie"] .ms-ctrl-btn {
-        background: transparent !important;
-        box-shadow: none !important;
-        border-radius: 0 !important;
-        overflow: visible !important;
+        opacity: 1;
+        filter: none;
       }
 
       #layer-koi .ms-floating-controls[data-art-style="sumie"] .ms-ctrl-btn:hover,
       #layer-koi .ms-floating-controls[data-art-style="sumie"] .ms-ctrl-btn:focus-visible {
-        box-shadow: none !important;
-        transform: translate3d(0, -1.5px, 0) scale(1.06);
-        filter: none;
-      }
-
-      #layer-koi .ms-floating-controls[data-art-style="sumie"] .ms-ctrl-icon {
-        object-fit: contain;
-        filter: none;
+        filter: brightness(1.10);
       }
 
       #layer-koi .ms-floating-controls[data-art-style="sumie"] .ms-ctrl-btn--sys-time::after {
         background: #c4281c;
-        box-shadow: none;
+        box-shadow: 0 0 6px rgba(196, 40, 28, 0.65);
       }
     `;
     document.head.appendChild(style);
@@ -516,20 +579,30 @@ export class KoiPondEngine {
     toggleBtn.setAttribute("aria-checked", this.renderer.isLightMode ? "true" : "false");
     toggleBtn.setAttribute("aria-label", "Toggle black and light pond");
 
+    const toggleFlipper = document.createElement("div");
+    toggleFlipper.className = "ms-coin-flipper";
+
+    const sunFace = document.createElement("div");
+    sunFace.className = "ms-coin-face ms-coin-face--front";
     const sunIcon = document.createElement("img");
-    sunIcon.className = "ms-ctrl-icon ms-ctrl-icon--celestial";
+    sunIcon.className = "ms-ctrl-icon";
     sunIcon.alt = "";
     sunIcon.draggable = false;
     sunIcon.src = ICON_SUN_URI;
+    sunFace.appendChild(sunIcon);
 
+    const moonFace = document.createElement("div");
+    moonFace.className = "ms-coin-face ms-coin-face--back";
     const moonIcon = document.createElement("img");
-    moonIcon.className = "ms-ctrl-icon ms-ctrl-icon--celestial";
+    moonIcon.className = "ms-ctrl-icon";
     moonIcon.alt = "";
     moonIcon.draggable = false;
     moonIcon.src = ICON_MOON_URI;
+    moonFace.appendChild(moonIcon);
 
-    toggleBtn.appendChild(sunIcon);
-    toggleBtn.appendChild(moonIcon);
+    toggleFlipper.appendChild(sunFace);
+    toggleFlipper.appendChild(moonFace);
+    toggleBtn.appendChild(toggleFlipper);
     const toggleIcon = sunIcon;
 
     toggleBtn.addEventListener("click", (e) => {
@@ -554,6 +627,7 @@ export class KoiPondEngine {
         this.lastSystemSyncMs = performance.now();
         this.renderer.transitionToTimeOfDayHours(this.getCurrentSystemHours(), false);
       }
+      this.mizuhikiChain?.nudgeByElement(toggleBtn, this.renderer.isLightMode ? 1 : -1);
       this.updateControlsUI();
       this.syncPortfolioUI(0);
       this.renderFrame();
@@ -599,6 +673,7 @@ export class KoiPondEngine {
         const localY = (btnY - pondRect.y) / pondRect.scale;
         this.world.splash(localX, localY);
         this.renderer.triggerPondClick(localX, localY, this.viewW, this.viewH);
+        this.mizuhikiChain?.nudgeByElement(profileBtn, 1);
       }
       this.renderer.setProfileTargetOpen(this.profileOpen);
       this.updateControlsUI();
@@ -611,26 +686,83 @@ export class KoiPondEngine {
     // 3. Lamp / Flashlight Toggle Button (Shown in Night Mode)
     const flashlightBtn = document.createElement("button");
     flashlightBtn.type = "button";
-    flashlightBtn.className = "ms-ctrl-btn ms-ctrl-btn--active";
+    flashlightBtn.className = "ms-ctrl-btn ms-ctrl-btn--flashlight ms-ctrl-btn--active";
     flashlightBtn.setAttribute("role", "switch");
     flashlightBtn.setAttribute("aria-checked", "true");
     flashlightBtn.setAttribute("aria-label", "Toggle dark mode flashlight");
     flashlightBtn.title = "Toggle Flashlight On / Off";
 
+    const flashFlipper = document.createElement("div");
+    flashFlipper.className = "ms-coin-flipper";
+
+    const flashFront = document.createElement("div");
+    flashFront.className = "ms-coin-face ms-coin-face--front";
     const flashlightIcon = document.createElement("img");
     flashlightIcon.className = "ms-ctrl-icon";
     flashlightIcon.alt = "";
     flashlightIcon.draggable = false;
-    flashlightIcon.src = ICON_FLASHLIGHT_URI;
-    flashlightBtn.appendChild(flashlightIcon);
+    flashlightIcon.src = ICON_FLASHLIGHT_OFF_URI;
+    flashFront.appendChild(flashlightIcon);
+
+    const flashBack = document.createElement("div");
+    flashBack.className = "ms-coin-face ms-coin-face--back";
+    const flashlightOffIcon = document.createElement("img");
+    flashlightOffIcon.className = "ms-ctrl-icon";
+    flashlightOffIcon.alt = "";
+    flashlightOffIcon.draggable = false;
+    flashlightOffIcon.src = ICON_FLASHLIGHT_URI;
+    flashBack.appendChild(flashlightOffIcon);
+
+    flashFlipper.appendChild(flashFront);
+    flashFlipper.appendChild(flashBack);
+    flashlightBtn.appendChild(flashFlipper);
 
     flashlightBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       this.renderer.toggleFlashlightEnabled();
+      this.mizuhikiChain?.nudgeByElement(flashlightBtn, this.renderer.isFlashlightEnabled ? 1 : -1);
       this.updateControlsUI();
       this.schedule();
       if (this.reducedMotion.matches) this.drawStill();
       this.emitStateChange();
+    });
+
+    // 3. GitHub Repository Link Button
+    const githubLink = document.createElement("a");
+    githubLink.className = "ms-ctrl-btn";
+    githubLink.href = "https://github.com/Saayan-Chowdhury-2004/Dual_KOI_Portfolio";
+    githubLink.target = "_blank";
+    githubLink.rel = "noopener noreferrer";
+    githubLink.setAttribute("aria-label", "Open Dual KOI Portfolio on GitHub");
+    githubLink.title = "GitHub — Dual KOI Portfolio";
+
+    const githubIcon = document.createElement("img");
+    githubIcon.className = "ms-ctrl-icon";
+    githubIcon.alt = "";
+    githubIcon.draggable = false;
+    githubIcon.src = ICON_GITHUB_URI;
+    githubLink.appendChild(githubIcon);
+    githubLink.addEventListener("click", (e) => {
+      e.stopPropagation();
+    });
+
+    // 4. LinkedIn Profile Link Button
+    const linkedinLink = document.createElement("a");
+    linkedinLink.className = "ms-ctrl-btn";
+    linkedinLink.href = "https://www.linkedin.com/in/saayan-chowdhury-pop2004/";
+    linkedinLink.target = "_blank";
+    linkedinLink.rel = "noopener noreferrer";
+    linkedinLink.setAttribute("aria-label", "Open Saayan Chowdhury on LinkedIn");
+    linkedinLink.title = "LinkedIn — Saayan Chowdhury";
+
+    const linkedinIcon = document.createElement("img");
+    linkedinIcon.className = "ms-ctrl-icon";
+    linkedinIcon.alt = "";
+    linkedinIcon.draggable = false;
+    linkedinIcon.src = ICON_LINKEDIN_URI;
+    linkedinLink.appendChild(linkedinIcon);
+    linkedinLink.addEventListener("click", (e) => {
+      e.stopPropagation();
     });
 
     this.toggleBtn = toggleBtn;
@@ -639,33 +771,66 @@ export class KoiPondEngine {
     this.toggleMoonIconEl = moonIcon;
     this.profileBtn = profileBtn;
     this.profileIconEl = profileIcon;
+    this.githubIconEl = githubIcon;
+    this.linkedinIconEl = linkedinIcon;
     this.flashlightBtn = flashlightBtn;
     this.flashlightIconEl = flashlightIcon;
+    this.flashlightOffIconEl = flashlightOffIcon;
 
-    // Pre-extract crisp halo-free transparent Sumi-e floating glyphs (Sun #141210, Moon #e8e0d0, Oni #c4281c)
-    extractSumieFloatingGlyphDataUrl(ICON_SUN_URI, [20, 18, 16], (uri) => {
-      this.sumieSunUri = uri;
-      if (this.lastControlsStyle === "sumie") this.toggleSunIconEl.src = uri;
-    });
-    extractSumieFloatingGlyphDataUrl(ICON_MOON_URI, [232, 224, 208], (uri) => {
-      this.sumieMoonUri = uri;
-      if (this.lastControlsStyle === "sumie") this.toggleMoonIconEl.src = uri;
-    });
-    extractSumieFloatingGlyphDataUrl(ICON_ONI_URI, [196, 40, 28], (uri) => {
-      this.sumieOniUri = uri;
-      if (this.lastControlsStyle === "sumie") this.profileIconEl.src = uri;
-    });
-    extractSumieFloatingGlyphDataUrl(ICON_FLASHLIGHT_URI, [232, 224, 208], (uri) => {
-      this.sumieFlashUri = uri;
-      if (this.lastControlsStyle === "sumie") this.flashlightIconEl.src = uri;
-    });
+    // Bake sculpted 3D cast-metal Japanese coins for Mokkotsu (brass) & Sumi-e (ink-black day/night)
+    const iconEntries: Array<["sun" | "moon" | "oni" | "github" | "linkedin" | "flash" | "flashOff", string, boolean]> = [
+      ["sun", ICON_SUN_URI, false],
+      ["moon", ICON_MOON_URI, false],
+      ["oni", ICON_ONI_URI, true],
+      ["github", ICON_GITHUB_URI, false],
+      ["linkedin", ICON_LINKEDIN_URI, false],
+      ["flash", ICON_FLASHLIGHT_URI, false],
+      ["flashOff", ICON_FLASHLIGHT_OFF_URI, false],
+    ];
+    for (const variant of ["brass", "sumie-day", "sumie-night"] as const) {
+      for (const [key, srcUri, isOni] of iconEntries) {
+        bakeMizuhikiCoinDataUrl(srcUri, variant, isOni, (bakedUri) => {
+          this.coinUris[variant][key] = bakedUri;
+          this.applyCoinArtForCurrentState();
+        });
+      }
+    }
 
+    // Order top-to-bottom: Sun/Moon, Oni, GitHub, LinkedIn, Flashlight (bottommost)
     container.appendChild(toggleBtn);
     container.appendChild(profileBtn);
+    container.appendChild(githubLink);
+    container.appendChild(linkedinLink);
     container.appendChild(flashlightBtn);
+
+    this.mizuhikiChain = new MizuhikiCoinChain(container, [
+      toggleBtn,
+      profileBtn,
+      githubLink,
+      linkedinLink,
+      flashlightBtn,
+    ]);
 
     (this.canvas.parentElement ?? document.body).appendChild(container);
     return container;
+  }
+
+  private applyCoinArtForCurrentState(): void {
+    const isSumie = this.renderer.getArtStyleMeta().id === "sumie";
+    const variant: MizuhikiCoinVariant = isSumie
+      ? this.renderer.isLightMode
+        ? "sumie-day"
+        : "sumie-night"
+      : "brass";
+    const map = this.coinUris[variant];
+    if (map.sun && this.toggleSunIconEl.src !== map.sun) this.toggleSunIconEl.src = map.sun;
+    if (map.moon && this.toggleMoonIconEl.src !== map.moon) this.toggleMoonIconEl.src = map.moon;
+    if (map.oni && this.profileIconEl.src !== map.oni) this.profileIconEl.src = map.oni;
+    if (map.github && this.githubIconEl.src !== map.github) this.githubIconEl.src = map.github;
+    if (map.linkedin && this.linkedinIconEl.src !== map.linkedin) this.linkedinIconEl.src = map.linkedin;
+    // Swapped: front (ON) shows flashOff art, back (OFF) shows flash art
+    if (map.flashOff && this.flashlightIconEl.src !== map.flashOff) this.flashlightIconEl.src = map.flashOff;
+    if (map.flash && this.flashlightOffIconEl.src !== map.flash) this.flashlightOffIconEl.src = map.flash;
   }
 
   private updateControlsUI(): void {
@@ -674,10 +839,11 @@ export class KoiPondEngine {
     const styleMeta = this.renderer.getArtStyleMeta();
 
     if (this.lastControlsLightMode !== isLight) {
+      const wasInitial = this.lastControlsLightMode === null;
       this.lastControlsLightMode = isLight;
       this.controlsEl.classList.toggle("ms-controls--night", !isLight);
       this.toggleBtn.setAttribute("aria-checked", isLight ? "true" : "false");
-      this.flashlightBtn.style.display = isLight ? "none" : "flex";
+      this.mizuhikiChain?.setFlashlightVisible(!isLight, wasInitial);
     }
     const isSystemSync = this.manualThemeOverride === null;
     this.toggleBtn.classList.toggle("ms-ctrl-btn--sys-time", isSystemSync);
@@ -699,22 +865,16 @@ export class KoiPondEngine {
       this.profileBtn.classList.toggle("ms-ctrl-btn--active", isOpen);
     }
 
-    if (this.lastControlsStyle !== styleMeta.id) {
+    const styleChanged = this.lastControlsStyle !== styleMeta.id;
+    if (styleChanged) {
       this.lastControlsStyle = styleMeta.id;
       this.controlsEl.setAttribute("data-art-style", styleMeta.id);
       this.portfolioUI.setArtStyle(styleMeta.id);
-      if (styleMeta.id === "sumie") {
-        if (this.sumieSunUri) this.toggleSunIconEl.src = this.sumieSunUri;
-        if (this.sumieMoonUri) this.toggleMoonIconEl.src = this.sumieMoonUri;
-        if (this.sumieOniUri) this.profileIconEl.src = this.sumieOniUri;
-        if (this.sumieFlashUri) this.flashlightIconEl.src = this.sumieFlashUri;
-      } else {
-        this.toggleSunIconEl.src = ICON_SUN_URI;
-        this.toggleMoonIconEl.src = ICON_MOON_URI;
-        this.profileIconEl.src = ICON_ONI_URI;
-        this.flashlightIconEl.src = ICON_FLASHLIGHT_URI;
-      }
+      this.mizuhikiChain?.setArtStyle(styleMeta.id);
     }
+
+    this.applyCoinArtForCurrentState();
+    this.mizuhikiChain?.refreshLayout();
 
     const flashOn = this.renderer.isFlashlightEnabled;
     if (this.lastControlsFlashlight !== flashOn) {
@@ -722,6 +882,7 @@ export class KoiPondEngine {
       this.flashlightBtn.setAttribute("aria-checked", flashOn ? "true" : "false");
       this.flashlightBtn.classList.toggle("ms-ctrl-btn--active", flashOn);
       this.flashlightBtn.classList.toggle("ms-ctrl-btn--flashlight-off", !flashOn);
+      this.flashlightBtn.classList.toggle("ms-ctrl-btn--flipped", !flashOn);
     }
   }
 
@@ -823,23 +984,9 @@ export class KoiPondEngine {
   }
 
   private syncCelestialToggleArc(): void {
-    if (!this.toggleSunIconEl || !this.toggleMoonIconEl) return;
-    const daylight = this.renderer.getDaylightFactor();
-    const night = 1.0 - daylight;
-
-    const sunArcX = -night * 46;
-    const sunArcY = Math.pow(night, 1.35) * 44;
-    const sunRot = -night * 65;
-    const sunScale = 0.72 + daylight * 0.28;
-    this.toggleSunIconEl.style.opacity = Math.min(1, Math.pow(daylight, 0.75)).toFixed(3);
-    this.toggleSunIconEl.style.transform = `translate3d(${sunArcX.toFixed(1)}%, ${sunArcY.toFixed(1)}%, 0) rotate(${sunRot.toFixed(1)}deg) scale(${sunScale.toFixed(3)})`;
-
-    const moonArcX = daylight * 46;
-    const moonArcY = Math.pow(daylight, 1.35) * 44;
-    const moonRot = daylight * 65;
-    const moonScale = 0.72 + night * 0.28;
-    this.toggleMoonIconEl.style.opacity = Math.min(1, Math.pow(night, 0.75)).toFixed(3);
-    this.toggleMoonIconEl.style.transform = `translate3d(${moonArcX.toFixed(1)}%, ${moonArcY.toFixed(1)}%, 0) rotate(${moonRot.toFixed(1)}deg) scale(${moonScale.toFixed(3)})`;
+    if (!this.toggleBtn) return;
+    // Flip coin sideways 180deg: Sun on front (Light/Day), Moon on back (Dark/Night)
+    this.toggleBtn.classList.toggle("ms-ctrl-btn--flipped", !this.renderer.isLightMode);
   }
 
   /**
@@ -879,8 +1026,8 @@ export class KoiPondEngine {
     portfolioRoot.style.webkitMaskImage = stageMask;
     portfolioRoot.style.maskImage = stageMask;
 
-    const ctrlOriginX = this.controlsEl.offsetLeft || this.viewW - 75;
-    const ctrlOriginY = this.controlsEl.offsetTop || 24;
+    const ctrlOriginX = this.controlsEl.offsetWidth > 0 ? this.controlsEl.offsetLeft : this.viewW - 163;
+    const ctrlOriginY = this.controlsEl.offsetWidth > 0 ? this.controlsEl.offsetTop : 0;
     const ctrlLocalX = fl.x - ctrlOriginX;
     const ctrlLocalY = fl.y - ctrlOriginY;
     const ctrlMask = `radial-gradient(circle ${rad}px at ${ctrlLocalX.toFixed(1)}px ${ctrlLocalY.toFixed(1)}px, rgba(0,0,0,1) 0%, rgba(0,0,0,${s22}) 22%, rgba(0,0,0,${s45}) 45%, rgba(0,0,0,${s68}) 68%, rgba(0,0,0,${s86}) 86%, rgba(0,0,0,${sOut}) 100%)`;
