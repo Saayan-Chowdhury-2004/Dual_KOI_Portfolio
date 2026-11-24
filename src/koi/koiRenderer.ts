@@ -12026,7 +12026,7 @@ export class KoiPondRenderer {
 
     ctx.save();
 
-    // Subtle warm lantern bloom inside the flashlight core (on open pond only)
+    // Warm amber lantern bloom inside the flashlight core (on open pond only)
     if (this.rectProgress <= 0.01) {
     const bloomGrad = ctx.createRadialGradient(
       this.flashX,
@@ -12034,11 +12034,12 @@ export class KoiPondRenderer {
       0,
       this.flashX,
       this.flashY,
-      outerRadius * 0.72
+      outerRadius * 0.78
     );
-    const bloomAlpha = 0.12 * (1 - easeDisp);
-    bloomGrad.addColorStop(0.0, `rgba(255, 222, 160, ${bloomAlpha.toFixed(3)})`);
-    bloomGrad.addColorStop(0.5, `rgba(224, 176, 108, ${(bloomAlpha * 0.42).toFixed(3)})`);
+    const bloomAlpha = 0.20 * (1 - easeDisp);
+    bloomGrad.addColorStop(0.0, `rgba(255, 204, 118, ${bloomAlpha.toFixed(3)})`);
+    bloomGrad.addColorStop(0.45, `rgba(242, 158, 72, ${(bloomAlpha * 0.54).toFixed(3)})`);
+    bloomGrad.addColorStop(0.78, `rgba(196, 114, 42, ${(bloomAlpha * 0.20).toFixed(3)})`);
     bloomGrad.addColorStop(1.0, "rgba(0, 0, 0, 0)");
     ctx.fillStyle = bloomGrad;
     ctx.fillRect(0, 0, width, height);

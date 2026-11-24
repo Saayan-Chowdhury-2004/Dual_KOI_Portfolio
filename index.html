@@ -9,9 +9,315 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet"
     href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=EB+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Noto+Serif+JP:wght@400;500;600;700&display=swap" />
+  <style id="koi-loading-screen-styles">
+    #koi-loading-screen {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      opacity: 1;
+      transition: opacity 680ms cubic-bezier(0.22, 1, 0.36, 1), visibility 680ms ease;
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+    }
+
+    #koi-loading-screen[data-theme="day"] {
+      --loader-bg: radial-gradient(ellipse at 50% 44%, #f5eee1 0%, #e7dcc7 58%, #d6c5ab 100%);
+      --loader-ink: #1c1814;
+      --loader-ink-soft: rgba(28, 24, 20, 0.54);
+      --loader-rule: rgba(28, 24, 20, 0.22);
+      --loader-seal-bg: rgba(185, 43, 34, 0.08);
+      --loader-seal-color: #b92b22;
+      --loader-seal-border: #b92b22;
+      --loader-glow: rgba(28, 24, 20, 0.08);
+      --loader-grain-opacity: 0.055;
+    }
+
+    #koi-loading-screen[data-theme="night"] {
+      --loader-bg: radial-gradient(ellipse at 50% 44%, #182135 0%, #101624 58%, #090c14 100%);
+      --loader-ink: #efe3c8;
+      --loader-ink-soft: rgba(216, 180, 100, 0.66);
+      --loader-rule: rgba(216, 180, 100, 0.28);
+      --loader-seal-bg: rgba(196, 58, 44, 0.14);
+      --loader-seal-color: #e4c174;
+      --loader-seal-border: #c99d47;
+      --loader-glow: rgba(216, 180, 100, 0.14);
+      --loader-grain-opacity: 0.04;
+    }
+
+    #koi-loading-screen {
+      background: var(--loader-bg);
+    }
+
+    #koi-loading-screen::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      opacity: var(--loader-grain-opacity);
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180' viewBox='0 0 180 180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+      background-size: 180px 180px;
+    }
+
+    #koi-loading-screen.koi-loader--hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .koi-loader-inner {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 22px;
+      padding: 24px;
+      text-align: center;
+    }
+
+    .koi-loader-enso-wrap {
+      position: relative;
+      width: clamp(138px, 22vw, 176px);
+      height: clamp(138px, 22vw, 176px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .koi-loader-enso-svg {
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+      filter: drop-shadow(0 6px 18px var(--loader-glow));
+    }
+
+    .koi-enso-ring {
+      fill: none;
+      stroke-linecap: round;
+      stroke-dasharray: 472;
+      stroke-dashoffset: 472;
+      transform-origin: 100px 100px;
+      animation:
+        koiEnsoDraw 1.35s cubic-bezier(0.28, 0.84, 0.34, 1) forwards,
+        koiEnsoBreathe 3.2s ease-in-out 1.35s infinite;
+    }
+
+    .koi-enso-ring--day {
+      stroke: url(#koiEnsoSumiGrad);
+    }
+
+    .koi-enso-ring--night {
+      stroke: url(#koiEnsoGoldGrad);
+    }
+
+    #koi-loading-screen[data-theme="day"] .koi-enso-ring--night {
+      display: none;
+    }
+
+    #koi-loading-screen[data-theme="night"] .koi-enso-ring--day {
+      display: none;
+    }
+
+    .koi-enso-wisp {
+      fill: none;
+      stroke-linecap: round;
+      opacity: 0;
+      animation: koiWispReveal 1.2s ease-out 0.35s forwards;
+    }
+
+    #koi-loading-screen[data-theme="day"] .koi-enso-wisp {
+      stroke: rgba(28, 24, 20, 0.24);
+    }
+
+    #koi-loading-screen[data-theme="night"] .koi-enso-wisp {
+      stroke: rgba(216, 180, 100, 0.28);
+    }
+
+    .koi-loader-seal {
+      position: absolute;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 42px;
+      height: 42px;
+      border: 1.8px solid var(--loader-seal-border);
+      border-radius: 4px;
+      background: var(--loader-seal-bg);
+      color: var(--loader-seal-color);
+      font-family: "Noto Serif JP", "Cormorant Garamond", serif;
+      font-size: 22px;
+      font-weight: 600;
+      line-height: 1;
+      letter-spacing: 0;
+      box-shadow: inset 0 0 0 1px rgba(185, 43, 34, 0.14);
+      opacity: 0;
+      transform: scale(0.9);
+      animation: koiSealStamp 560ms cubic-bezier(0.22, 1, 0.36, 1) 280ms forwards;
+    }
+
+    .koi-loader-identity {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      opacity: 0;
+      transform: translateY(6px);
+      animation: koiTextFade 620ms cubic-bezier(0.22, 1, 0.36, 1) 180ms forwards;
+    }
+
+    .koi-loader-name {
+      margin: 0;
+      font-family: "Cormorant Garamond", "EB Garamond", "Libre Baskerville", Georgia, serif;
+      font-size: clamp(19px, 2.5vw, 24px);
+      font-weight: 600;
+      letter-spacing: 0.26em;
+      text-indent: 0.26em;
+      text-transform: uppercase;
+      color: var(--loader-ink);
+      line-height: 1.2;
+    }
+
+    .koi-loader-divider {
+      width: 44px;
+      height: 1px;
+      background: var(--loader-rule);
+    }
+
+    .koi-loader-subtitle {
+      margin: 0;
+      font-family: "Cormorant Garamond", "EB Garamond", Georgia, serif;
+      font-size: 11.5px;
+      font-weight: 500;
+      letter-spacing: 0.34em;
+      text-indent: 0.34em;
+      text-transform: uppercase;
+      color: var(--loader-ink-soft);
+    }
+
+    @keyframes koiEnsoDraw {
+      0% {
+        stroke-dashoffset: 472;
+        opacity: 0.35;
+      }
+      100% {
+        stroke-dashoffset: 48;
+        opacity: 1;
+      }
+    }
+
+    @keyframes koiEnsoBreathe {
+      0%, 100% {
+        transform: scale(1) rotate(0deg);
+        opacity: 1;
+      }
+      50% {
+        transform: scale(1.022) rotate(3deg);
+        opacity: 0.88;
+      }
+    }
+
+    @keyframes koiWispReveal {
+      from {
+        opacity: 0;
+      }
+      to {
+        opacity: 1;
+      }
+    }
+
+    @keyframes koiSealStamp {
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
+
+    @keyframes koiTextFade {
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .koi-enso-ring,
+      .koi-enso-wisp,
+      .koi-loader-seal,
+      .koi-loader-identity {
+        animation: none !important;
+        opacity: 1 !important;
+        transform: none !important;
+        stroke-dashoffset: 48 !important;
+      }
+    }
+  </style>
 </head>
 
 <body>
+  <div id="koi-loading-screen" data-theme="day" role="status" aria-live="polite" aria-label="Loading Saayan Chowdhury Dual KOI Portfolio">
+    <div class="koi-loader-inner">
+      <div class="koi-loader-enso-wrap" aria-hidden="true">
+        <svg class="koi-loader-enso-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <filter id="koiBrushFilter" x="-12%" y="-12%" width="124%" height="124%">
+              <feTurbulence type="fractalNoise" baseFrequency="0.065" numOctaves="3" seed="7" result="noise" />
+              <feDisplacementMap in="SourceGraphic" in2="noise" scale="4.6" xChannelSelector="R" yChannelSelector="G" />
+            </filter>
+            <linearGradient id="koiEnsoSumiGrad" x1="16%" y1="12%" x2="88%" y2="88%">
+              <stop offset="0%" stop-color="#171411" />
+              <stop offset="55%" stop-color="#29231d" />
+              <stop offset="100%" stop-color="#483e35" stop-opacity="0.72" />
+            </linearGradient>
+            <linearGradient id="koiEnsoGoldGrad" x1="14%" y1="12%" x2="88%" y2="88%">
+              <stop offset="0%" stop-color="#ebd08a" />
+              <stop offset="50%" stop-color="#cca049" />
+              <stop offset="100%" stop-color="#966e26" stop-opacity="0.78" />
+            </linearGradient>
+          </defs>
+          <!-- Delicate outer dry-brush wisp -->
+          <path class="koi-enso-wisp" filter="url(#koiBrushFilter)" stroke-width="2.2"
+            d="M 106 23 A 77 77 0 1 1 65 31" />
+          <!-- Primary sumi / antique-gold ink-brush Enso -->
+          <path class="koi-enso-ring koi-enso-ring--day" filter="url(#koiBrushFilter)" stroke-width="11.5"
+            d="M 103 26 C 145 27, 174 59, 173 101 C 172 143, 140 174, 98 174 C 56 174, 26 141, 27 99 C 28 64, 51 37, 81 29" />
+          <path class="koi-enso-ring koi-enso-ring--night" filter="url(#koiBrushFilter)" stroke-width="11.5"
+            d="M 103 26 C 145 27, 174 59, 173 101 C 172 143, 140 174, 98 174 C 56 174, 26 141, 27 99 C 28 64, 51 37, 81 29" />
+        </svg>
+        <div class="koi-loader-seal" title="Koi Hanko Seal">鯉</div>
+      </div>
+      <div class="koi-loader-identity">
+        <p class="koi-loader-name">Saayan Chowdhury</p>
+        <span class="koi-loader-divider" aria-hidden="true"></span>
+        <p class="koi-loader-subtitle">Dual KOI Portfolio</p>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      try {
+        var el = document.getElementById("koi-loading-screen");
+        if (!el) return;
+        var params = new URLSearchParams(window.location.search);
+        var override = params.get("loaderTime");
+        var isNight;
+        if (override === "night") {
+          isNight = true;
+        } else if (override === "day") {
+          isNight = false;
+        } else {
+          var h = new Date().getHours();
+          isNight = h >= 18 || h < 6;
+        }
+        el.setAttribute("data-theme", isNight ? "night" : "day");
+        document.documentElement.style.background = isNight ? "#090c14" : "#e7dcc7";
+      } catch (_) {}
+    })();
+  </script>
   <div id="app"></div>
   <script type="module" src="/demo.ts"></script>
 </body>

@@ -28,10 +28,13 @@ export class KoiFluidApp {
   private sumieCanvas: HTMLCanvasElement;
   private fluidCanvas: HTMLCanvasElement;
   private idleCurtainEl: HTMLElement | null = null;
-  private idleCurtainTimer: number | null = null;
+  private scrollCueTimers: number[] = [];
+  private scrollCueScheduleStarted = false;
   private idleCurtainOpenTimer: number | null = null;
   private idleCurtainDismissTimer: number | null = null;
-  private hasUserDragged = false;
+  private loaderDismissTimer: number | null = null;
+  private hasSwitchedToSumieOnce = false;
+  private isProfileMenuOpen = false;
 
   private mokkotsuEngine: KoiPondEngine;
   private sumieEngine: KoiPondEngine;
@@ -107,9 +110,11 @@ export class KoiFluidApp {
     // Wire bidirectional state synchronization (Theme, System Time, Flashlight, Menu Open/Close, Expanded Column, Project Topic, Blur)
     this.mokkotsuEngine.onStateChange = (state: SharedPortfolioState) => {
       this.sumieEngine.applySyncedState(state);
+      this.handlePortfolioStateChange(state);
     };
     this.sumieEngine.onStateChange = (state: SharedPortfolioState) => {
       this.mokkotsuEngine.applySyncedState(state);
+      this.handlePortfolioStateChange(state);
     };
 
     // Wire 100% synchronous lockstep rendering of the bottom engine & WebGL fluid inside the active engine's frame
@@ -148,25 +153,105 @@ export class KoiFluidApp {
     window.addEventListener("click", this.onClickCapture, { capture: true });
     window.addEventListener("resize", this.onResize);
 
-    // Track viewer's first 10 seconds; if no click-drag occurs, pop in the bottom scroll cue
-    this.startIdleDragCurtainTimer();
+    // Reveal pond smoothly once first frame and fonts settle, then start the 20s pond idle timer
+    this.scheduleLoadingScreenDismissal();
   }
 
-  private startIdleDragCurtainTimer(): void {
-    if (this.hasUserDragged || this.disposed) return;
-    if (this.idleCurtainTimer !== null) {
-      window.clearTimeout(this.idleCurtainTimer);
+  private scheduleLoadingScreenDismissal(): void {
+    const loaderEl = document.getElementById("koi-loading-screen");
+    if (!loaderEl) {
+      this.startIdleDragCurtainTimer();
+      return;
     }
-    this.idleCurtainTimer = window.setTimeout(() => {
-      this.idleCurtainTimer = null;
-      if (!this.hasUserDragged && !this.disposed) {
-        this.showIdleDragCurtain();
+
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("holdLoader") === "1") {
+        return;
       }
-    }, 10000);
+    } catch {
+      // Ignore URL parsing errors
+    }
+
+    const startTime = performance.now();
+    const MIN_DISPLAY_MS = 720;
+    const MAX_FONT_WAIT_MS = 900;
+
+    const finishDismiss = () => {
+      if (this.disposed) return;
+      const elapsed = performance.now() - startTime;
+      const remaining = Math.max(0, MIN_DISPLAY_MS - elapsed);
+      this.loaderDismissTimer = window.setTimeout(() => {
+        this.loaderDismissTimer = null;
+        if (this.disposed) return;
+        loaderEl.classList.add("koi-loader--hidden");
+        window.setTimeout(() => {
+          loaderEl.remove();
+        }, 720);
+        if (!this.hasSwitchedToSumieOnce) {
+          this.startIdleDragCurtainTimer();
+        }
+      }, remaining);
+    };
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const fontsReady = document.fonts?.ready;
+        if (fontsReady) {
+          let settled = false;
+          const once = () => {
+            if (settled) return;
+            settled = true;
+            finishDismiss();
+          };
+          fontsReady.then(once, once);
+          window.setTimeout(once, MAX_FONT_WAIT_MS);
+        } else {
+          finishDismiss();
+        }
+      });
+    });
+  }
+
+  private handlePortfolioStateChange(state: SharedPortfolioState): void {
+    const nextOpen = Boolean(state.isPortfolioOpen);
+    if (nextOpen === this.isProfileMenuOpen) return;
+    this.isProfileMenuOpen = nextOpen;
+
+    // Never show the scroll cue inside the profile menu
+    if (nextOpen && this.idleCurtainEl) {
+      this.dismissIdleDragCurtain();
+    }
+  }
+
+  private clearScrollCueTimers(): void {
+    for (const tid of this.scrollCueTimers) {
+      window.clearTimeout(tid);
+    }
+    this.scrollCueTimers = [];
+  }
+
+  /**
+   * Schedules the scroll cue exactly twice after the portfolio website is viewed:
+   *  1st pop-in at 20s, 2nd pop-in 30s later (50s total). Never pops in inside the profile menu.
+   */
+  private startIdleDragCurtainTimer(): void {
+    if (this.scrollCueScheduleStarted || this.hasSwitchedToSumieOnce || this.disposed) return;
+    this.scrollCueScheduleStarted = true;
+    const scheduleMs = [20000, 50000];
+    for (const delayMs of scheduleMs) {
+      const tid = window.setTimeout(() => {
+        this.scrollCueTimers = this.scrollCueTimers.filter((id) => id !== tid);
+        if (!this.hasSwitchedToSumieOnce && !this.disposed && !this.isProfileMenuOpen && this.activeStyle !== "sumie") {
+          this.showIdleDragCurtain();
+        }
+      }, delayMs);
+      this.scrollCueTimers.push(tid);
+    }
   }
 
   private showIdleDragCurtain(): void {
-    if (this.disposed || this.hasUserDragged || this.activeStyle === "sumie") return;
+    if (this.disposed || this.hasSwitchedToSumieOnce || this.isProfileMenuOpen || this.activeStyle === "sumie") return;
 
     if (this.idleCurtainOpenTimer !== null) {
       window.clearTimeout(this.idleCurtainOpenTimer);
@@ -175,6 +260,10 @@ export class KoiFluidApp {
     if (this.idleCurtainDismissTimer !== null) {
       window.clearTimeout(this.idleCurtainDismissTimer);
       this.idleCurtainDismissTimer = null;
+    }
+    if (this.loaderDismissTimer !== null) {
+      window.clearTimeout(this.loaderDismissTimer);
+      this.loaderDismissTimer = null;
     }
     if (this.idleCurtainOpenTimer !== null) {
       window.clearTimeout(this.idleCurtainOpenTimer);
@@ -222,13 +311,13 @@ export class KoiFluidApp {
     void curtain.offsetWidth;
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        if (this.idleCurtainEl !== curtain || this.hasUserDragged) return;
+        if (this.idleCurtainEl !== curtain || this.hasSwitchedToSumieOnce || this.isProfileMenuOpen) return;
         curtain.classList.add("idc-popped");
 
         // Step 2: Simultaneously shrink by 10%, unroll parchment, and shift horizontally into center
         this.idleCurtainOpenTimer = window.setTimeout(() => {
           this.idleCurtainOpenTimer = null;
-          if (this.idleCurtainEl === curtain && !this.hasUserDragged) {
+          if (this.idleCurtainEl === curtain && !this.hasSwitchedToSumieOnce && !this.isProfileMenuOpen) {
             curtain.classList.add("idc-opened");
           }
         }, 360);
@@ -237,10 +326,6 @@ export class KoiFluidApp {
   }
 
   private dismissIdleDragCurtain(): void {
-    if (this.idleCurtainTimer !== null) {
-      window.clearTimeout(this.idleCurtainTimer);
-      this.idleCurtainTimer = null;
-    }
     if (this.idleCurtainOpenTimer !== null) {
       window.clearTimeout(this.idleCurtainOpenTimer);
       this.idleCurtainOpenTimer = null;
@@ -265,7 +350,6 @@ export class KoiFluidApp {
   }
 
   private handleUserDragDetected(): void {
-    this.hasUserDragged = true;
     this.dismissIdleDragCurtain();
   }
 
@@ -335,6 +419,11 @@ export class KoiFluidApp {
   private swapInkStyleLayers(): void {
     const prevTop = this.getActiveEngine();
     this.activeStyle = this.activeStyle === "mokkotsu" ? "sumie" : "mokkotsu";
+    if (this.activeStyle === "sumie") {
+      this.hasSwitchedToSumieOnce = true;
+      this.clearScrollCueTimers();
+      this.dismissIdleDragCurtain();
+    }
     const isMokkotsuTop = this.activeStyle === "mokkotsu";
     const nextTop = this.getActiveEngine();
 
@@ -647,10 +736,7 @@ export class KoiFluidApp {
 
   public destroy(): void {
     this.disposed = true;
-    if (this.idleCurtainTimer !== null) {
-      window.clearTimeout(this.idleCurtainTimer);
-      this.idleCurtainTimer = null;
-    }
+    this.clearScrollCueTimers();
     if (this.idleCurtainDismissTimer !== null) {
       window.clearTimeout(this.idleCurtainDismissTimer);
       this.idleCurtainDismissTimer = null;

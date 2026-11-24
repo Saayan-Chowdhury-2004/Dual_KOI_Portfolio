@@ -4,7 +4,7 @@ import {
   ICON_GITHUB_URI,
   ICON_LINKEDIN_URI,
   ICON_MOON_URI,
-  ICON_ONI_URI,
+  ICON_PROFILE_COIN_URI,
   ICON_SUN_URI,
 } from "./columnArtData";
 import { clamp } from "../math";
@@ -16,7 +16,7 @@ import {
   type KoiArtStyleMeta,
 } from "./koiRenderer";
 import { DEFAULT_KOI_CONFIG, PondWorld } from "./pondWorld";
-import { bakeMizuhikiCoinDataUrl, MizuhikiCoinChain, type MizuhikiCoinVariant } from "./mizuhikiCoins";
+import { bakeMizuhikiCoinDataUrl, bakeMizuhikiPortraitCoinDataUrl, MizuhikiCoinChain, type MizuhikiCoinVariant } from "./mizuhikiCoins";
 import type { KoiPondConfig, KoiSpec } from "./koiTypes";
 
 const STEP = 1 / 60;
@@ -647,7 +647,7 @@ export class KoiPondEngine {
     profileIcon.className = "ms-ctrl-icon";
     profileIcon.alt = "";
     profileIcon.draggable = false;
-    profileIcon.src = ICON_ONI_URI;
+    profileIcon.src = ICON_PROFILE_COIN_URI;
     profileBtn.appendChild(profileIcon);
 
     profileBtn.addEventListener("click", (e) => {
@@ -778,10 +778,9 @@ export class KoiPondEngine {
     this.flashlightOffIconEl = flashlightOffIcon;
 
     // Bake sculpted 3D cast-metal Japanese coins for Mokkotsu (brass) & Sumi-e (ink-black day/night)
-    const iconEntries: Array<["sun" | "moon" | "oni" | "github" | "linkedin" | "flash" | "flashOff", string, boolean]> = [
+    const iconEntries: Array<["sun" | "moon" | "github" | "linkedin" | "flash" | "flashOff", string, boolean]> = [
       ["sun", ICON_SUN_URI, false],
       ["moon", ICON_MOON_URI, false],
-      ["oni", ICON_ONI_URI, true],
       ["github", ICON_GITHUB_URI, false],
       ["linkedin", ICON_LINKEDIN_URI, false],
       ["flash", ICON_FLASHLIGHT_URI, false],
@@ -794,6 +793,11 @@ export class KoiPondEngine {
           this.applyCoinArtForCurrentState();
         });
       }
+      // Bake sculpted profile silhouette coin medallion for both Mokkotsu (brass) and Sumi-e (ink-black)
+      bakeMizuhikiPortraitCoinDataUrl(ICON_PROFILE_COIN_URI, variant, (bakedUri) => {
+        this.coinUris[variant].oni = bakedUri;
+        this.applyCoinArtForCurrentState();
+      });
     }
 
     // Order top-to-bottom: Sun/Moon, Oni, GitHub, LinkedIn, Flashlight (bottommost)

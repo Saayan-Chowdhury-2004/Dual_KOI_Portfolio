@@ -340,12 +340,12 @@ export class FluidMaskEngine {
     const stepPx = 3.5;
     const steps = Math.max(1, Math.min(64, Math.ceil(dist / stepPx)));
 
-    const vx = clamp(dx * 3.2, -160, 160);
-    const vy = clamp(-dy * 3.2, -160, 160);
+    const vx = clamp(dx * 3.8, -200, 200);
+    const vy = clamp(-dy * 3.8, -200, 200);
 
-    // 80% smaller linear brush size: radius in squared-UV Gaussian space is ~0.00075..0.00115
+    // Increased spread: radius in squared-UV Gaussian space is ~0.0022..0.0036
     const speedFactor = clamp(dist / 45, 0, 1);
-    const radius = (0.00075 + speedFactor * 0.00040) * intensityScale;
+    const radius = (0.0022 + speedFactor * 0.0014) * intensityScale;
 
     for (let i = 0; i <= steps; i++) {
       const t = steps === 0 ? 1 : i / steps;
@@ -492,7 +492,7 @@ export class FluidMaskEngine {
     gl.uniform1f(this.advectionProg.uniforms.dt, dt);
     gl.uniform1f(
       this.advectionProg.uniforms.dissipation,
-      this.phase === "retracting" ? 1.4 : 2.2
+      this.phase === "retracting" ? 1.4 : 1.55
     );
     this.blit(this.velocityFBO.write);
     this.velocityFBO.swap();

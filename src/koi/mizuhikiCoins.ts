@@ -335,6 +335,341 @@ export function bakeMizuhikiCoinDataUrl(
   img.src = sourceUri;
 }
 
+
+/**
+ * Bakes a 2x-retina sculpted 3D cast-metal Japanese coin medallion featuring the
+ * user's circular-cropped portrait logo inset cleanly inside the recessed field
+ * (strict 1:1 aspect ratio, zero distortion), framed by the matching Mizuhiki
+ * beveled rim, milled bead ring, and pierced top/bottom cord eyelets.
+ */
+export function bakeMizuhikiPortraitCoinDataUrl(
+  sourceUri: string,
+  variant: MizuhikiCoinVariant,
+  onReady: (dataUrl: string) => void
+): void {
+  const cacheKey = `profile-silhouette-v2|${variant}|${sourceUri.slice(0, 64)}|${sourceUri.length}`;
+  const cached = coinBakeCache.get(cacheKey);
+  if (cached) {
+    onReady(cached);
+    return;
+  }
+
+  const img = new Image();
+  img.crossOrigin = "anonymous";
+  img.onload = () => {
+    const size = 192;
+    const cx = size * 0.5;
+    const cy = size * 0.5;
+    const outerR = size * 0.496;
+    const rimInnerR = size * 0.402;
+
+    const out = document.createElement("canvas");
+    out.width = size;
+    out.height = size;
+    const ctx = out.getContext("2d");
+    if (!ctx) return;
+
+    const isBrass = variant === "brass";
+    const isSumieNight = variant === "sumie-night";
+
+    // Extract silhouette alpha, glasses lens recess (G), and glasses specular glint (R)
+    // positioned so the side-profile bust fills the circular coin field cleanly.
+    const srcCanvas = document.createElement("canvas");
+    srcCanvas.width = size;
+    srcCanvas.height = size;
+    const sctx = srcCanvas.getContext("2d");
+    if (!sctx) return;
+    const bustSize = rimInnerR * 1.98;
+    const bustX = cx - bustSize * 0.55;
+    const bustY = cy - bustSize * 0.47;
+    sctx.imageSmoothingEnabled = true;
+    sctx.imageSmoothingQuality = "high";
+    sctx.drawImage(img, bustX, bustY, bustSize, bustSize);
+
+    const srcData = sctx.getImageData(0, 0, size, size).data;
+
+    const silCanvas = document.createElement("canvas");
+    silCanvas.width = size;
+    silCanvas.height = size;
+    const silCtx = silCanvas.getContext("2d")!;
+    const silImg = silCtx.createImageData(size, size);
+
+    const lensCanvas = document.createElement("canvas");
+    lensCanvas.width = size;
+    lensCanvas.height = size;
+    const lensCtx = lensCanvas.getContext("2d")!;
+    const lensImg = lensCtx.createImageData(size, size);
+
+    const glintCanvas = document.createElement("canvas");
+    glintCanvas.width = size;
+    glintCanvas.height = size;
+    const glintCtx = glintCanvas.getContext("2d")!;
+    const glintImg = glintCtx.createImageData(size, size);
+
+    const clipR = rimInnerR - 1.5;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const dx = x - cx;
+        const dy = y - cy;
+        const distR = Math.hypot(dx, dy);
+        if (distR > clipR + 1.0) continue;
+        const edgeFade = distR > clipR - 1.5 ? Math.max(0, (clipR + 0.5 - distR) / 2.0) : 1.0;
+
+        const idx = (y * size + x) * 4;
+        const r = srcData[idx];
+        const g = srcData[idx + 1];
+        const a = srcData[idx + 3];
+        if (a < 6) continue;
+
+        const silA = Math.round(a * edgeFade);
+        silImg.data[idx] = 255;
+        silImg.data[idx + 1] = 255;
+        silImg.data[idx + 2] = 255;
+        silImg.data[idx + 3] = silA;
+
+        if (g > 16) {
+          lensImg.data[idx] = 255;
+          lensImg.data[idx + 1] = 255;
+          lensImg.data[idx + 2] = 255;
+          lensImg.data[idx + 3] = Math.round(g * edgeFade);
+        }
+        if (r > 18) {
+          glintImg.data[idx] = 255;
+          glintImg.data[idx + 1] = 255;
+          glintImg.data[idx + 2] = 255;
+          glintImg.data[idx + 3] = Math.round(r * edgeFade);
+        }
+      }
+    }
+    silCtx.putImageData(silImg, 0, 0);
+    lensCtx.putImageData(lensImg, 0, 0);
+    glintCtx.putImageData(glintImg, 0, 0);
+
+    const tint = (mask: HTMLCanvasElement, fillStyle: string | CanvasGradient): HTMLCanvasElement => {
+      const c = document.createElement("canvas");
+      c.width = size;
+      c.height = size;
+      const cctx = c.getContext("2d")!;
+      cctx.drawImage(mask, 0, 0);
+      cctx.globalCompositeOperation = "source-in";
+      cctx.fillStyle = fillStyle;
+      cctx.fillRect(0, 0, size, size);
+      return c;
+    };
+
+    ctx.save();
+
+    // 1. Sculpted outer cast-metal rim (identical silhouette & finish to standard coins)
+    ctx.beginPath();
+    ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
+    const rimGrad = ctx.createLinearGradient(cx - outerR, cy - outerR, cx + outerR, cy + outerR);
+    if (isBrass) {
+      rimGrad.addColorStop(0, "#f6dd94");
+      rimGrad.addColorStop(0.24, "#cfa246");
+      rimGrad.addColorStop(0.58, "#8c6320");
+      rimGrad.addColorStop(0.86, "#573a0d");
+      rimGrad.addColorStop(1, "#362206");
+    } else if (isSumieNight) {
+      rimGrad.addColorStop(0, "#7c7568");
+      rimGrad.addColorStop(0.26, "#46423c");
+      rimGrad.addColorStop(0.62, "#24221f");
+      rimGrad.addColorStop(1, "#0d0c0b");
+    } else {
+      rimGrad.addColorStop(0, "#5e5850");
+      rimGrad.addColorStop(0.26, "#312e2a");
+      rimGrad.addColorStop(0.65, "#191816");
+      rimGrad.addColorStop(1, "#090808");
+    }
+    ctx.fillStyle = rimGrad;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, outerR - 1.2, 0, Math.PI * 2);
+    ctx.lineWidth = 2.0;
+    ctx.strokeStyle = isBrass
+      ? "rgba(255, 244, 200, 0.50)"
+      : isSumieNight
+        ? "rgba(220, 212, 196, 0.34)"
+        : "rgba(180, 172, 158, 0.26)";
+    ctx.stroke();
+
+    // 2. Recessed cast interior field (warm antique lacquer-bronze in Mokkotsu, deep sumi patina in Sumi-e)
+    ctx.beginPath();
+    ctx.arc(cx, cy, rimInnerR, 0, Math.PI * 2);
+    const fieldGrad = ctx.createRadialGradient(
+      cx - rimInnerR * 0.28,
+      cy - rimInnerR * 0.3,
+      rimInnerR * 0.08,
+      cx,
+      cy,
+      rimInnerR
+    );
+    if (isBrass) {
+      fieldGrad.addColorStop(0, "#946426");
+      fieldGrad.addColorStop(0.54, "#6b4317");
+      fieldGrad.addColorStop(0.88, "#4a2b0d");
+      fieldGrad.addColorStop(1, "#311b07");
+    } else if (isSumieNight) {
+      fieldGrad.addColorStop(0, "#2d2b27");
+      fieldGrad.addColorStop(0.6, "#1b1a18");
+      fieldGrad.addColorStop(1, "#100f0e");
+    } else {
+      fieldGrad.addColorStop(0, "#252320");
+      fieldGrad.addColorStop(0.6, "#161513");
+      fieldGrad.addColorStop(1, "#0c0b0a");
+    }
+    ctx.fillStyle = fieldGrad;
+    ctx.fill();
+
+    // Subtle hammered cast-metal patina grain + milled bead ring
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, outerR - 1, 0, Math.PI * 2);
+    ctx.clip();
+    let seed = 2026;
+    const rand = () => {
+      seed = (seed * 16807) % 2147483647;
+      return (seed - 1) / 2147483646;
+    };
+    for (let i = 0; i < 560; i++) {
+      const gx = rand() * size;
+      const gy = rand() * size;
+      const gr = 0.8 + rand() * 1.8;
+      const bright = rand() > 0.5;
+      ctx.fillStyle = isBrass
+        ? bright
+          ? "rgba(255, 236, 175, 0.065)"
+          : "rgba(32, 18, 4, 0.085)"
+        : bright
+          ? "rgba(225, 218, 204, 0.048)"
+          : "rgba(0, 0, 0, 0.11)";
+      ctx.beginPath();
+      ctx.arc(gx, gy, gr, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const beadR = (outerR + rimInnerR) * 0.5;
+    const beadCount = 40;
+    for (let b = 0; b < beadCount; b++) {
+      const ang = (b / beadCount) * Math.PI * 2;
+      const bx = cx + Math.cos(ang) * beadR;
+      const by = cy + Math.sin(ang) * beadR;
+      if (Math.abs(bx - cx) < 13.5) continue;
+      ctx.fillStyle = isBrass
+        ? "rgba(255, 240, 185, 0.34)"
+        : isSumieNight
+          ? "rgba(180, 174, 160, 0.25)"
+          : "rgba(150, 144, 134, 0.20)";
+      ctx.beginPath();
+      ctx.arc(bx, by, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // 3. Sculpted 3D Embossed Profile Relief (clipped inside inner bezel)
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, rimInnerR - 0.8, 0, Math.PI * 2);
+    ctx.clip();
+
+    // Cast relief drop shadow
+    const shadowMask = tint(
+      silCanvas,
+      isBrass ? "rgba(24, 12, 2, 0.82)" : "rgba(0, 0, 0, 0.88)"
+    );
+    ctx.drawImage(shadowMask, 2.5, 3.1);
+
+    // Top-left specular bevel highlight
+    const hiMask = tint(
+      silCanvas,
+      isBrass ? "rgba(255, 248, 212, 0.88)" : "rgba(255, 252, 244, 0.80)"
+    );
+    ctx.drawImage(hiMask, -1.7, -1.7);
+
+    // Main embossed cast-metal profile face
+    const faceGrad = ctx.createLinearGradient(
+      cx - rimInnerR,
+      cy - rimInnerR,
+      cx + rimInnerR,
+      cy + rimInnerR
+    );
+    if (isBrass) {
+      faceGrad.addColorStop(0, "#fff2bd");
+      faceGrad.addColorStop(0.45, "#e8be62");
+      faceGrad.addColorStop(1, "#b4822b");
+    } else if (isSumieNight) {
+      faceGrad.addColorStop(0, "#f5efe2");
+      faceGrad.addColorStop(0.55, "#d8d0be");
+      faceGrad.addColorStop(1, "#a29a8a");
+    } else {
+      faceGrad.addColorStop(0, "#f0e9db");
+      faceGrad.addColorStop(0.55, "#cfc7b5");
+      faceGrad.addColorStop(1, "#948c7c");
+    }
+    const faceLayer = tint(silCanvas, faceGrad);
+    ctx.drawImage(faceLayer, 0, 0);
+
+    // Engraved dark patina recess on the glasses lens so the frame reads sharply at coin scale
+    const lensLayer = tint(
+      lensCanvas,
+      isBrass ? "rgba(44, 24, 6, 0.72)" : "rgba(12, 11, 10, 0.78)"
+    );
+    ctx.drawImage(lensLayer, 0, 0);
+
+    // Crisp gleaming glasses rim & temple specular highlight
+    const glintLayer = tint(
+      glintCanvas,
+      isBrass ? "rgba(255, 251, 232, 0.96)" : "rgba(255, 253, 247, 0.96)"
+    );
+    ctx.drawImage(glintLayer, 0, 0);
+
+    ctx.restore();
+
+    // 4. Recessed inner bezel lip shadow
+    ctx.beginPath();
+    ctx.arc(cx, cy, rimInnerR, 0, Math.PI * 2);
+    const innerLip = ctx.createLinearGradient(
+      cx - rimInnerR,
+      cy - rimInnerR,
+      cx + rimInnerR,
+      cy + rimInnerR
+    );
+    if (isBrass) {
+      innerLip.addColorStop(0, "rgba(28, 16, 4, 0.85)");
+      innerLip.addColorStop(0.5, "rgba(60, 38, 10, 0.35)");
+      innerLip.addColorStop(1, "rgba(248, 224, 150, 0.72)");
+    } else {
+      innerLip.addColorStop(0, "rgba(0, 0, 0, 0.88)");
+      innerLip.addColorStop(0.5, "rgba(18, 16, 14, 0.42)");
+      innerLip.addColorStop(1, isSumieNight ? "rgba(190, 182, 166, 0.48)" : "rgba(150, 144, 134, 0.36)");
+    }
+    ctx.lineWidth = 3.2;
+    ctx.strokeStyle = innerLip;
+    ctx.stroke();
+
+    // 5. Pierced Top & Bottom Cord Eyelets
+    const eyeletOffset = (outerR + rimInnerR) * 0.5;
+    for (const ey of [cy - eyeletOffset, cy + eyeletOffset]) {
+      ctx.beginPath();
+      ctx.arc(cx, ey, 5.2, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(10, 6, 3, 0.92)";
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = isBrass
+        ? "rgba(246, 218, 138, 0.65)"
+        : "rgba(160, 152, 138, 0.45)";
+      ctx.stroke();
+    }
+
+    ctx.restore();
+
+    const dataUrl = out.toDataURL("image/png");
+    coinBakeCache.set(cacheKey, dataUrl);
+    onReady(dataUrl);
+  };
+  img.src = sourceUri;
+}
+
 interface ChainNodeState {
   el: HTMLElement;
   sheenEl: HTMLElement | null;
