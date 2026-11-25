@@ -329,11 +329,11 @@ export class BrutalistPortfolioUI {
       nextIdx === null
         ? [1, 1, 1, 1]
         : [
-            nextIdx === 0 ? EXPANDED_COL_WEIGHT : SHRUNK_COL_WEIGHT,
-            nextIdx === 1 ? EXPANDED_COL_WEIGHT : SHRUNK_COL_WEIGHT,
-            nextIdx === 2 ? EXPANDED_COL_WEIGHT : SHRUNK_COL_WEIGHT,
-            nextIdx === 3 ? EXPANDED_COL_WEIGHT : SHRUNK_COL_WEIGHT,
-          ];
+          nextIdx === 0 ? EXPANDED_COL_WEIGHT : SHRUNK_COL_WEIGHT,
+          nextIdx === 1 ? EXPANDED_COL_WEIGHT : SHRUNK_COL_WEIGHT,
+          nextIdx === 2 ? EXPANDED_COL_WEIGHT : SHRUNK_COL_WEIGHT,
+          nextIdx === 3 ? EXPANDED_COL_WEIGHT : SHRUNK_COL_WEIGHT,
+        ];
     this.colWeights = [...weights] as [number, number, number, number];
     this.startColWeights = [...weights] as [number, number, number, number];
     this.targetColWeights = [...weights] as [number, number, number, number];
@@ -410,6 +410,9 @@ export class BrutalistPortfolioUI {
   }
 
   public destroy(): void {
+    this.brocadeBitmap?.close();
+    this.brocadeBitmap = null;
+    this.brocadeImg = null;
     this.root.remove();
   }
 
@@ -455,11 +458,11 @@ export class BrutalistPortfolioUI {
       nextIdx === null
         ? [1, 1, 1, 1]
         : [
-            nextIdx === 0 ? EXPANDED_COL_WEIGHT : SHRUNK_COL_WEIGHT,
-            nextIdx === 1 ? EXPANDED_COL_WEIGHT : SHRUNK_COL_WEIGHT,
-            nextIdx === 2 ? EXPANDED_COL_WEIGHT : SHRUNK_COL_WEIGHT,
-            nextIdx === 3 ? EXPANDED_COL_WEIGHT : SHRUNK_COL_WEIGHT,
-          ];
+          nextIdx === 0 ? EXPANDED_COL_WEIGHT : SHRUNK_COL_WEIGHT,
+          nextIdx === 1 ? EXPANDED_COL_WEIGHT : SHRUNK_COL_WEIGHT,
+          nextIdx === 2 ? EXPANDED_COL_WEIGHT : SHRUNK_COL_WEIGHT,
+          nextIdx === 3 ? EXPANDED_COL_WEIGHT : SHRUNK_COL_WEIGHT,
+        ];
 
     this.targetGapMultipliers =
       nextIdx === null
@@ -515,13 +518,9 @@ export class BrutalistPortfolioUI {
     style.id = STYLE_ELEMENT_ID;
     style.textContent = `
 
-      @import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=EB+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Noto+Serif+JP:wght@400;500;600;700&display=swap");
-
       @font-face {
         font-family: "KanjiBrutalist";
-        src:
-          url("data:font/ttf;base64,${KANJI_BRUTALIST_REGULAR_B64}") format("truetype"),
-          url("./fonts/KanjiBrutalist-Regular.ttf") format("truetype");
+        src: url("data:font/ttf;base64,${KANJI_BRUTALIST_REGULAR_B64}") format("truetype");
         font-weight: 400;
         font-style: normal;
         font-display: block;
@@ -529,9 +528,7 @@ export class BrutalistPortfolioUI {
 
       @font-face {
         font-family: "KanjiBrutalist";
-        src:
-          url("data:font/ttf;base64,${KANJI_BRUTALIST_BOLD_B64}") format("truetype"),
-          url("./fonts/KanjiBrutalist-Bold.ttf") format("truetype");
+        src: url("data:font/ttf;base64,${KANJI_BRUTALIST_BOLD_B64}") format("truetype");
         font-weight: 700;
         font-style: normal;
         font-display: block;
@@ -869,32 +866,6 @@ export class BrutalistPortfolioUI {
         border-color: var(--bp-open-accent);
         color: var(--bp-open-accent);
         order: 2;
-      }
-
-      #layer-koi .bp-folio-numeral {
-        font-family: var(--bp-kanji);
-        font-size: 10px;
-        font-weight: 700;
-        letter-spacing: 0.14em;
-        text-transform: uppercase;
-        writing-mode: vertical-rl;
-        text-orientation: mixed;
-        background: var(--bp-gold-foil);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        filter: drop-shadow(0 1px 1px rgba(20, 3, 2, 0.75));
-        order: 2;
-      }
-
-      #layer-koi .bp-col--is-expanded .bp-folio-numeral {
-        writing-mode: horizontal-tb;
-        font-size: 12px;
-        letter-spacing: 0.14em;
-        background: none;
-        -webkit-text-fill-color: var(--bp-open-accent);
-        color: var(--bp-open-accent);
-        filter: none;
-        order: 1;
       }
 
       #layer-koi .bp-col-title {
@@ -1251,12 +1222,6 @@ export class BrutalistPortfolioUI {
         background: var(--bp-gold-foil);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-      }
-
-      #layer-koi .bp-identity-coords {
-        font-size: 10.5px;
-        color: var(--bp-gold-muted);
-        opacity: 0.9;
       }
 
       
@@ -2025,73 +1990,6 @@ export class BrutalistPortfolioUI {
 
       #layer-koi .bp-portfolio-root[data-art-style="sumie"][data-sumi-seal="mono"] .bp-col.bp-col--is-expanded {
         --bp-open-accent: #1c1916 !important;
-      }
-
-      /* Temporary Per-Column Heading Text Size Sliders */
-      .bp-temp-compare-bar {
-        position: fixed;
-        left: 24px;
-        bottom: 18px;
-        z-index: 9999;
-        display: none;
-        flex-direction: column;
-        gap: 8px;
-        padding: 10px 14px;
-        min-width: 310px;
-        background: rgba(14, 13, 12, 0.94);
-        border: 1.5px solid rgba(236, 198, 104, 0.72);
-        box-shadow: 0 8px 26px rgba(0, 0, 0, 0.65);
-        backdrop-filter: blur(8px);
-        font-family: "Geist Mono", ui-monospace, monospace;
-        font-size: 11px;
-        color: #f3e6c8;
-        pointer-events: auto;
-        user-select: none;
-      }
-
-      .bp-temp-compare-header {
-        font-weight: 700;
-        font-size: 10.5px;
-        letter-spacing: 0.10em;
-        color: #e6be53;
-        border-bottom: 1px solid rgba(236, 198, 104, 0.28);
-        padding-bottom: 5px;
-      }
-
-      .bp-temp-sliders-grid {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-
-      .bp-temp-slider-row {
-        display: grid;
-        grid-template-columns: 118px 1fr 32px;
-        align-items: center;
-        gap: 8px;
-        cursor: pointer;
-      }
-
-      .bp-temp-slider-name {
-        font-size: 10.5px;
-        font-weight: 700;
-        letter-spacing: 0.05em;
-        color: #fff6dc;
-      }
-
-      .bp-temp-slider-input {
-        width: 100%;
-        accent-color: #e6be53;
-        cursor: pointer;
-        margin: 0;
-      }
-
-      .bp-temp-slider-val {
-        font-size: 11.5px;
-        font-weight: 700;
-        color: #ffd970;
-        text-align: right;
-        font-variant-numeric: tabular-nums;
       }
     `;
     document.head.appendChild(style);

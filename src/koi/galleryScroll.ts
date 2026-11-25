@@ -36,7 +36,10 @@ import {
 } from "./rippleField";
 import {
   GALLERY_SCROLL_ITEMS,
-  getGalleryCoverImageUri,
+  getGalleryCoverMediaKey,
+  loadGalleryMedia,
+  type GalleryMediaKey,
+  type GalleryMediaMap,
   type GalleryScrollItem,
 } from "./galleryData";
 
@@ -71,6 +74,9 @@ export class GalleryScrollUI {
   private brocadeLoaded = false;
 
   private readonly items: readonly GalleryScrollItem[] = GALLERY_SCROLL_ITEMS;
+  private tileImgs: Array<{ img: HTMLImageElement; key: GalleryMediaKey | undefined }> = [];
+  private mediaMap: GalleryMediaMap | null = null;
+  private mediaLoading = false;
   private targetOpen = false;
   private flipProgress = 0;
   private readonly flipOpenDuration = FLIP_OPEN_DURATION;
@@ -162,7 +168,7 @@ export class GalleryScrollUI {
       img.className = "gs-tile-img";
       img.alt = item.title;
       img.draggable = false;
-      img.src = getGalleryCoverImageUri(item);
+      this.tileImgs.push({ img, key: getGalleryCoverMediaKey(item) });
       thumbWrap.appendChild(img);
 
       const meta = document.createElement("div");
@@ -454,11 +460,33 @@ export class GalleryScrollUI {
     return true;
   }
 
+  private ensureMediaLoaded(): void {
+    if (this.mediaMap || this.mediaLoading) return;
+    this.mediaLoading = true;
+    loadGalleryMedia()
+      .then((map) => {
+        this.mediaMap = map;
+        for (const entry of this.tileImgs) {
+          if (entry.key && !entry.img.src) {
+            entry.img.src = map[entry.key];
+          }
+        }
+        if (this.activeItemIndex !== null) {
+          this.renderLightboxDOM();
+        }
+      })
+      .finally(() => {
+        this.mediaLoading = false;
+      });
+  }
+
   public setOpen(open: boolean, silent = false): void {
     if (this.targetOpen === open) return;
     this.targetOpen = open;
     this.domSettled = false;
-    if (!open) {
+    if (open) {
+      this.ensureMediaLoaded();
+    } else {
       this.activeItemIndex = null;
       this.activeSlideIndex = 0;
       this.renderLightboxDOM();
@@ -814,6 +842,9 @@ export class GalleryScrollUI {
     this.targetOpen = isOpen;
     this.flipProgress = isOpen ? 1 : 0;
     this.domSettled = false;
+    if (isOpen) {
+      this.ensureMediaLoaded();
+    }
     this.root.setAttribute("aria-hidden", isOpen ? "false" : "true");
 
     const nextIdx =
@@ -881,7 +912,10 @@ export class GalleryScrollUI {
     this.lbPrevBtn.disabled = !hasMultiple;
     this.lbNextBtn.disabled = !hasMultiple;
 
-    this.lbImgEl.src = slide.imageUri;
+    this.lbImgEl.src = this.mediaMap?.[slide.mediaKey] ?? "";
+    if (!this.mediaMap) {
+      this.ensureMediaLoaded();
+    }
     this.lbImgEl.alt = `${item.title} — ${slide.label}`;
     if (this.slideTransitionDir !== 0 && !this.reducedMotion) {
       const animClass =
@@ -932,6 +966,9 @@ export class GalleryScrollUI {
   }
 
   public destroy(): void {
+    this.brocadeBitmap?.close();
+    this.brocadeBitmap = null;
+    this.brocadeImg = null;
     this.root.remove();
   }
 

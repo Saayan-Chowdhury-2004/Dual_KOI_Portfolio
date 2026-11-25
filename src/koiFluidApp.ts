@@ -133,6 +133,11 @@ export class KoiFluidApp {
           this.swapInkStyleLayers();
         },
         onDragStart: () => {
+          const topEng = this.getActiveEngine();
+          const botEng = this.activeStyle === "mokkotsu" ? this.sumieEngine : this.mokkotsuEngine;
+          botEng.setPortraitPhotoRevealed(false, true);
+          botEng.syncVisualStateFrom(topEng);
+          botEng.renderFrame();
           this.handleUserDragDetected();
         },
       },
@@ -476,12 +481,6 @@ export class KoiFluidApp {
     if (targetEl && targetEl.closest(".ms-floating-controls")) {
       return;
     }
-
-    const topEng = this.getActiveEngine();
-    const botEng = this.activeStyle === "mokkotsu" ? this.sumieEngine : this.mokkotsuEngine;
-    botEng.setPortraitPhotoRevealed(false, true);
-    botEng.syncVisualStateFrom(topEng);
-    botEng.renderFrame();
 
     this.fluidMask.onPointerDown(e.clientX, e.clientY);
   };

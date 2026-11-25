@@ -40,7 +40,6 @@ import type {
   KoiFish,
   KoiPondConfig,
   OrganicPatch,
-  PondFoodPellet,
   PondPalette,
   PondThemeName,
 } from "./koiTypes";
@@ -401,9 +400,15 @@ export class KoiPondRenderer {
     this.shadowWorkCanvas = null;
     this.shadowBlurCanvas = null;
     this.causticMaskCanvas = null;
+    if (this.causticGL) {
+      if (this.causticGLProg) this.causticGL.deleteProgram(this.causticGLProg);
+      if (this.causticGLQuad) this.causticGL.deleteBuffer(this.causticGLQuad);
+      this.causticGL.getExtension("WEBGL_lose_context")?.loseContext();
+    }
     this.causticGLCanvas = null;
     this.causticGL = null;
     this.causticGLProg = null;
+    this.causticGLQuad = null;
     this.redBorderImg = null;
   }
 
@@ -1572,105 +1577,6 @@ export class KoiPondRenderer {
     ctx.restore();
   }
 
-  /**
-   * Paints floating koi food pellets dropped by clicking/tapping on the pond,
-   * complete with delicate surface meniscus rings and style-matched pigments.
-   */
-  private paintPondFood(
-    ctx: CanvasRenderingContext2D,
-    food: PondFoodPellet[],
-    time: number,
-    isLight: boolean
-  ): void {
-    if (!food || food.length === 0) return;
-    const style = this.artStyle;
-    ctx.save();
-
-    for (let i = 0; i < food.length; i++) {
-      const p = food[i];
-      if (!p.active) continue;
-
-      const fadeIn = koiClamp(p.age / 0.18, 0.2, 1);
-      const fadeOut = koiClamp((p.maxAge - p.age) / 2.5, 0, 1);
-      const alpha = fadeIn * fadeOut;
-      if (alpha <= 0.01) continue;
-
-      const bobX = Math.sin(time * 2.4 + p.phase) * 0.8;
-      const bobY = Math.cos(time * 2.1 + p.phase) * 0.8;
-      const px = p.x + bobX;
-      const py = p.y + bobY;
-
-      // 1. Delicate concentric meniscus ring around the floating food grain
-      const pulse = 0.5 + 0.5 * Math.sin(time * 3.8 + p.phase);
-      const ringR = p.radius + 3.2 + pulse * 4.5;
-      ctx.beginPath();
-      ctx.arc(px, py, ringR, 0, Math.PI * 2);
-      ctx.lineWidth = 0.85;
-      ctx.strokeStyle =
-        false
-          ? `rgba(38, 72, 92, ${(0.34 * alpha * (1 - pulse * 0.4)).toFixed(3)})`
-          : style === "sumie"
-            ? isLight
-              ? `rgba(32, 28, 24, ${(0.28 * alpha * (1 - pulse * 0.4)).toFixed(3)})`
-              : `rgba(216, 208, 196, ${(0.28 * alpha * (1 - pulse * 0.4)).toFixed(3)})`
-            : isLight
-              ? `rgba(88, 102, 92, ${(0.28 * alpha * (1 - pulse * 0.4)).toFixed(3)})`
-              : `rgba(214, 192, 148, ${(0.28 * alpha * (1 - pulse * 0.4)).toFixed(3)})`;
-      ctx.stroke();
-
-      // 2. Submerged shadow under the floating pellet
-      ctx.beginPath();
-      ctx.arc(px + 1.5, py + 2.2, p.radius * 1.15, 0, Math.PI * 2);
-      ctx.fillStyle = isLight
-        ? `rgba(52, 40, 26, ${(0.18 * alpha).toFixed(3)})`
-        : `rgba(0, 0, 0, ${(0.42 * alpha).toFixed(3)})`;
-      ctx.fill();
-
-      // 3. Pellet body
-      ctx.beginPath();
-      ctx.arc(px, py, p.radius, 0, Math.PI * 2);
-      if (false) {
-        ctx.fillStyle = `rgba(226, 152, 54, ${(0.95 * alpha).toFixed(3)})`;
-        ctx.fill();
-        ctx.lineWidth = 1.0;
-        ctx.strokeStyle = `rgba(24, 18, 14, ${(0.88 * alpha).toFixed(3)})`;
-        ctx.stroke();
-      } else if (style === "sumie") {
-        ctx.fillStyle =
-          i % 2 === 0
-            ? `rgba(196, 48, 32, ${(0.90 * alpha).toFixed(3)})`
-            : isLight
-              ? `rgba(36, 30, 26, ${(0.88 * alpha).toFixed(3)})`
-              : `rgba(224, 212, 192, ${(0.88 * alpha).toFixed(3)})`;
-        ctx.fill();
-        ctx.lineWidth = 1.1;
-        ctx.strokeStyle = `rgba(8, 7, 7, ${(0.90 * alpha).toFixed(3)})`;
-        ctx.stroke();
-      } else {
-        const g = ctx.createRadialGradient(
-          px - p.radius * 0.3,
-          py - p.radius * 0.3,
-          0.3,
-          px,
-          py,
-          p.radius * 1.1
-        );
-        g.addColorStop(0.0, `rgba(242, 188, 96, ${(0.95 * alpha).toFixed(3)})`);
-        g.addColorStop(0.65, `rgba(198, 104, 44, ${(0.92 * alpha).toFixed(3)})`);
-        g.addColorStop(1.0, `rgba(138, 58, 24, ${(0.88 * alpha).toFixed(3)})`);
-        ctx.fillStyle = g;
-        ctx.fill();
-      }
-    }
-
-    ctx.restore();
-  }
-
-  /**
-   * Paints natural botanical lotus leaves (*hasu*) adapted to the active artistic style.
-   * Positioned clear of the corner fretwork and rendered with rich, opaque botanical pigments
-   * and deep subsurface drop shadows so koi swimming underneath are naturally occluded.
-   */
   /**
    * Returns the base specifications of the 9 Lotus Leaves of varied botanical sizes.
    */
@@ -12215,9 +12121,8 @@ export class KoiPondRenderer {
       ctx.fillRect(0, 0, effW, effH);
     }
 
-    // 3. Pond food and Z-Stratified Living Koi Fishes
+    // 3. Z-Stratified Living Koi Fishes
     this.paintHandBrushedRipples(ctx, world, isLight);
-    this.paintPondFood(ctx, world.food, time, isLight);
 
     for (let i = 0; i < world.koi.length; i++) {
       this.paintLivingKoi(ctx, world.koi[i], isLight, config.showScales !== false);

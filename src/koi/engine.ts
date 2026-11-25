@@ -711,7 +711,6 @@ export class KoiPondEngine {
         const pondRect = this.renderer.getActivePondRect(this.viewW, this.viewH);
         const localX = (btnX - pondRect.x) / pondRect.scale;
         const localY = (btnY - pondRect.y) / pondRect.scale;
-        this.world.splash(localX, localY);
         this.renderer.triggerPondClick(localX, localY, this.viewW, this.viewH);
         this.mizuhikiChain?.nudgeByElement(profileBtn, 1);
       }
@@ -755,7 +754,6 @@ export class KoiPondEngine {
         const pondRect = this.renderer.getActivePondRect(this.viewW, this.viewH);
         const localX = (btnX - pondRect.x) / pondRect.scale;
         const localY = (btnY - pondRect.y) / pondRect.scale;
-        this.world.splash(localX, localY);
         this.renderer.triggerPondClick(localX, localY, this.viewW, this.viewH);
       }
       this.mizuhikiChain?.nudgeByElement(scrollBtn, nextOpen ? 1 : -1);
@@ -1367,7 +1365,6 @@ export class KoiPondEngine {
     const effW = pondRect.w / pondRect.scale;
     const effH = pondRect.h / pondRect.scale;
     this.renderer.triggerPondClick(x, y, effW, effH);
-    if (!this.reducedMotion.matches) this.world.splash(x, y);
     this.schedule();
   };
 

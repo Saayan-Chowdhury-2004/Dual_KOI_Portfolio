@@ -104,25 +104,8 @@ export interface OrganicPatch {
   layer: 'hi' | 'sumi' | 'shiro';
 }
 
-export type SwimMode = 'cruise' | 'glide' | 'accelerate';
-
 /** What a koi is currently doing. Each koi rolls the next one from its own personality weights. */
 export type KoiBehavior = 'cruise' | 'loiter' | 'drift' | 'trail';
-
-/** Floating food pellet dropped by clicking/tapping on the pond. */
-export interface PondFoodPellet {
-  id: number;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  radius: number;
-  age: number;
-  maxAge: number;
-  phase: number;
-  seed: number;
-  active: boolean;
-}
 
 /** Per-koi steering state: current goal, personality, smoothed avoidance, and fluid attention. */
 export interface KoiBrain {
@@ -167,8 +150,6 @@ export interface KoiBrain {
   hasPerceivedTarget: boolean;
   /** Tangential arc approach sense (+1 or -1) so approaches curve naturally rather than arrowing straight */
   approachSign: 1 | -1;
-  /** ID of the specific food pellet this koi is currently curving toward (0 if none) */
-  foodTargetId: number;
 }
 
 export interface KoiFish {
@@ -207,7 +188,7 @@ export interface KoiFish {
   /** Right-of-way speed multiplier [0.0..1.18] to let another koi pass without overlap */
   yieldMultiplier: number;
   /** Current locomotive state */
-  swimMode: SwimMode;
+  swimMode: 'cruise' | 'glide' | 'accelerate';
   /** Remaining time in current locomotive state (seconds) */
   modeTimer: number;
 

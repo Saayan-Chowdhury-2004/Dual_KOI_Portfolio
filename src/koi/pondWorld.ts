@@ -17,7 +17,7 @@ import {
 import { SPINE_NODE_COUNT } from './koiGeometry';
 import { koiAngleDiff, koiClamp, KOI_TAU } from './koiMath';
 import { PondEnvironment } from './koiPond';
-import type { KoiFish, KoiPondConfig, KoiSpec, PondFish, PondFoodPellet } from './koiTypes';
+import type { KoiFish, KoiPondConfig, KoiSpec, PondFish } from './koiTypes';
 import { VARIETY_ORDER } from './koiVarieties';
 
 export const DEFAULT_KOI_CONFIG: KoiPondConfig = {
@@ -44,7 +44,6 @@ export class PondWorld {
   time = 0;
   koi: KoiFish[] = [];
   fish: PondFish[] = [];
-  food: PondFoodPellet[] = [];
 
   readonly pond = new PondEnvironment();
   readonly pointer: PondPointerState = {
@@ -97,12 +96,6 @@ export class PondWorld {
       for (const f of this.fish) {
         f.x = koiClamp(f.x, -60, width + 60);
         f.y = koiClamp(f.y, -60, height + 60);
-      }
-      const sx = width / oldW;
-      const sy = height / oldH;
-      for (const p of this.food) {
-        p.x = koiClamp(p.x * sx, 16, width - 16);
-        p.y = koiClamp(p.y * sy, 16, height - 16);
       }
       this.hasSnapshot = false;
     }
@@ -175,12 +168,6 @@ export class PondWorld {
       r.y *= sy;
     }
 
-    for (let i = 0; i < this.food.length; i++) {
-      const p = this.food[i];
-      p.x = koiClamp(p.x * sx, 16, targetW - 16);
-      p.y = koiClamp(p.y * sy, 16, targetH - 16);
-    }
-
     this.hasSnapshot = false;
   }
 
@@ -212,16 +199,8 @@ export class PondWorld {
     }
 
     this.fish = seedPondFish(w, h);
-    this.food = [];
     this.fishStepAccum = 0;
     this.hasSnapshot = false;
-  }
-
-  /**
-   * Click / tap on the pond: food dropping is disabled so clicking does not drop pellets.
-   */
-  splash(_x: number, _y: number) {
-    // Intentionally passive: clicking no longer drops koi food pellets.
   }
 
   private capturePrevSnapshot() {
@@ -407,10 +386,8 @@ export class PondWorld {
       this.koi,
       this.pond,
       this.pointer,
-      this.food,
       this.width,
       this.height,
-      this.time,
       dt,
       this.config
     );

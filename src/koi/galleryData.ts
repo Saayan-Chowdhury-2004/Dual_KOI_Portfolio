@@ -6,21 +6,17 @@
  * all images belonging to that group.
  */
 
-import {
-  BE10X_URI,
-  EISF_2024_DEMO_URI,
-  EISF_2026_STAGE_URI,
-  EISF_2026_TEAM_URI,
-  CHIEF_GUEST_URI,
-  ESUMMIT_URI,
-  HCL_GUVI_URI,
-  IHMMC_PORTRAIT_URI,
-  IHMMC_STAGE_URI,
-  MEDITECH_CERT_URI,
-  MEDITECH_STAGE_URI,
-  SIH_AWARD_URI,
-  SIH_PHOTO_URI,
-} from "./galleryMediaData";
+export type GalleryMediaMap = typeof import("./galleryMediaData");
+export type GalleryMediaKey = keyof GalleryMediaMap;
+
+let mediaPromise: Promise<GalleryMediaMap> | null = null;
+
+export function loadGalleryMedia(): Promise<GalleryMediaMap> {
+  if (!mediaPromise) {
+    mediaPromise = import("./galleryMediaData");
+  }
+  return mediaPromise;
+}
 
 export type GalleryItemCategory = "Award" | "Certificate" | "Competition" | "Talk";
 
@@ -28,7 +24,7 @@ export interface GallerySlide {
   readonly id: string;
   readonly label: string;
   readonly caption: string;
-  readonly imageUri: string;
+  readonly mediaKey: GalleryMediaKey;
   readonly naturalWidth: number;
   readonly naturalHeight: number;
 }
@@ -60,7 +56,7 @@ export const GALLERY_SCROLL_ITEMS: readonly GalleryScrollItem[] = [
         label: "Winner Certificate",
         caption:
           "Official Smart India Hackathon 2024 Hardware Edition Grand Finale Winner Certificate issued by the Ministry of Education, AICTE, and MoE's Innovation Cell.",
-        imageUri: SIH_AWARD_URI,
+        mediaKey: "SIH_AWARD_URI",
         naturalWidth: 1024,
         naturalHeight: 723,
       },
@@ -69,7 +65,7 @@ export const GALLERY_SCROLL_ITEMS: readonly GalleryScrollItem[] = [
         label: "Grand Finale Stage Photo",
         caption:
           "Team Flying Eye (1571) receiving the Smart India Hackathon 2024 Hardware Edition Winner award and ₹25,000 prize cheque at Galgotias University Nodal Centre.",
-        imageUri: SIH_PHOTO_URI,
+        mediaKey: "SIH_PHOTO_URI",
         naturalWidth: 1080,
         naturalHeight: 1080,
       },
@@ -90,7 +86,7 @@ export const GALLERY_SCROLL_ITEMS: readonly GalleryScrollItem[] = [
         label: "Certificate of Participation",
         caption:
           "Certificate of Participation for Team Tech Wizards at the Innothon national-level hackathon, IIIT Bhubaneswar E-SUMMIT '25.",
-        imageUri: ESUMMIT_URI,
+        mediaKey: "ESUMMIT_URI",
         naturalWidth: 1024,
         naturalHeight: 723,
       },
@@ -111,7 +107,7 @@ export const GALLERY_SCROLL_ITEMS: readonly GalleryScrollItem[] = [
         label: "Trophy, Medal & Certificate",
         caption:
           "Certificate of Appreciation, gold medal, and 4th-position trophy for Best Innovative Idea at IHMMC 2025 (Team 244 — Flying Eye).",
-        imageUri: IHMMC_PORTRAIT_URI,
+        mediaKey: "IHMMC_PORTRAIT_URI",
         naturalWidth: 1204,
         naturalHeight: 1600,
       },
@@ -120,7 +116,7 @@ export const GALLERY_SCROLL_ITEMS: readonly GalleryScrollItem[] = [
         label: "Stage Award Ceremony",
         caption:
           "On-stage felicitation at Asansol Engineering College receiving the IHMMC '25 Best Innovative Idea trophy, certificate, and prize cheque.",
-        imageUri: IHMMC_STAGE_URI,
+        mediaKey: "IHMMC_STAGE_URI",
         naturalWidth: 1600,
         naturalHeight: 1204,
       },
@@ -141,7 +137,7 @@ export const GALLERY_SCROLL_ITEMS: readonly GalleryScrollItem[] = [
         label: "Certificate of Recognition",
         caption:
           "Verified Certificate of Recognition (ID: o97AP1z7f66I608934) — Performance Grade: A+, Marks: 97, completed 30 September 2025.",
-        imageUri: HCL_GUVI_URI,
+        mediaKey: "HCL_GUVI_URI",
         naturalWidth: 1620,
         naturalHeight: 1080,
       },
@@ -162,7 +158,7 @@ export const GALLERY_SCROLL_ITEMS: readonly GalleryScrollItem[] = [
         label: "On-Stage Talk",
         caption:
           "Delivering an invited guest session on stage — sharing hands-on experience from national hackathons and hardware engineering.",
-        imageUri: CHIEF_GUEST_URI,
+        mediaKey: "CHIEF_GUEST_URI",
         naturalWidth: 768,
         naturalHeight: 1024,
       },
@@ -183,7 +179,7 @@ export const GALLERY_SCROLL_ITEMS: readonly GalleryScrollItem[] = [
         label: "EISF 2026 Award Ceremony",
         caption:
           "Receiving the Best Applied Technology Project Award trophy and certificates on stage at the Eastern India Science & Engineering Fair 2026, Birla Industrial & Technological Museum, Kolkata (Jan 16, 2026).",
-        imageUri: EISF_2026_STAGE_URI,
+        mediaKey: "EISF_2026_STAGE_URI",
         naturalWidth: 928,
         naturalHeight: 519,
       },
@@ -192,7 +188,7 @@ export const GALLERY_SCROLL_ITEMS: readonly GalleryScrollItem[] = [
         label: "Team, Trophy & Prize Cheque",
         caption:
           "Team celebrating with the Best Applied Technology Project Award trophy, certificates, and ₹5,000 prize cheque at Science & Engineering Fair 2026.",
-        imageUri: EISF_2026_TEAM_URI,
+        mediaKey: "EISF_2026_TEAM_URI",
         naturalWidth: 920,
         naturalHeight: 517,
       },
@@ -201,7 +197,7 @@ export const GALLERY_SCROLL_ITEMS: readonly GalleryScrollItem[] = [
         label: "EISF 2024 Live Demonstration",
         caption:
           "Demonstrating the smart traffic intersection hardware prototype to judges during the Eastern India Science & Engineering Fair 2024 at BITM, Kolkata (Jan 9, 2024).",
-        imageUri: EISF_2024_DEMO_URI,
+        mediaKey: "EISF_2024_DEMO_URI",
         naturalWidth: 1600,
         naturalHeight: 1204,
       },
@@ -222,7 +218,7 @@ export const GALLERY_SCROLL_ITEMS: readonly GalleryScrollItem[] = [
         label: "Certificate of Completion",
         caption:
           "be10X Verified Certificate of Completion for the AI Tools and ChatGPT Workshop, issued May 17, 2026.",
-        imageUri: BE10X_URI,
+        mediaKey: "BE10X_URI",
         naturalWidth: 1024,
         naturalHeight: 682,
       },
@@ -243,7 +239,7 @@ export const GALLERY_SCROLL_ITEMS: readonly GalleryScrollItem[] = [
         label: "Certificate & Medal",
         caption:
           "MediTech Expo 2026 Certificate of Achievement paired with the Rahul Foundation Award of Excellence medal (21.11.2026).",
-        imageUri: MEDITECH_CERT_URI,
+        mediaKey: "MEDITECH_CERT_URI",
         naturalWidth: 1600,
         naturalHeight: 1204,
       },
@@ -252,7 +248,7 @@ export const GALLERY_SCROLL_ITEMS: readonly GalleryScrollItem[] = [
         label: "Award Presentation",
         caption:
           "Receiving the framed MediTech Expo 2026 Award of Excellence certificate on stage during the Rahul Foundation ceremony.",
-        imageUri: MEDITECH_STAGE_URI,
+        mediaKey: "MEDITECH_STAGE_URI",
         naturalWidth: 940,
         naturalHeight: 1024,
       },
@@ -260,6 +256,6 @@ export const GALLERY_SCROLL_ITEMS: readonly GalleryScrollItem[] = [
   },
 ];
 
-export function getGalleryCoverImageUri(item: GalleryScrollItem): string {
-  return item.slides[0]?.imageUri ?? "";
+export function getGalleryCoverMediaKey(item: GalleryScrollItem): GalleryMediaKey | undefined {
+  return item.slides[0]?.mediaKey;
 }

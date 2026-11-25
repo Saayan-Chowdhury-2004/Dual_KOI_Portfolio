@@ -13,8 +13,7 @@ import type {
   KoiSpec,
   KoiVariety,
   SpineNode,
-  PondFish,
-  PondFoodPellet
+  PondFish
 } from './koiTypes';
 import { generateVarietyPatchesAndColors, KOI_VARIETIES, pickKoiName, VARIETY_ORDER } from './koiVarieties';
 
@@ -258,8 +257,7 @@ export function createKoiFish(
     perceivedX: x,
     perceivedY: y,
     hasPerceivedTarget: false,
-    approachSign: rand() < 0.5 ? 1 : -1,
-    foodTargetId: 0
+    approachSign: rand() < 0.5 ? 1 : -1
   };
 
   const trailCap = Math.ceil((bodyLength * 1.35) / TRAIL_STEP) + 16;
@@ -344,52 +342,6 @@ function pickNaturalApproachSign(f: KoiFish, tx: number, ty: number): 1 | -1 {
     return f.turnRate >= 0 ? 1 : -1;
   }
   return f.brain.rng() < 0.5 ? 1 : -1;
-}
-
-export function attractKoiToFood(
-  fishes: KoiFish[],
-  spawnedPellets: PondFoodPellet[],
-  dropX: number,
-  dropY: number
-): void {
-  if (fishes.length === 0 || spawnedPellets.length === 0) return;
-
-  const order = fishes
-    .map((f, idx) => ({ f, idx, d: Math.hypot(dropX - f.x, dropY - f.y) }))
-    .sort((a, b) => a.d - b.d);
-
-  for (let rank = 0; rank < order.length; rank++) {
-    const { f, d } = order[rank];
-    const b = f.brain;
-    const assignedPellet = spawnedPellets[rank % spawnedPellets.length];
-    b.foodTargetId = assignedPellet.id;
-
-    const distDelay = koiClamp(d / 1400, 0.04, 0.22);
-    b.perceptionDelay = 0.05 + rank * 0.06 + distDelay * (0.7 + b.rng() * 0.5);
-
-    const naturalSign = pickNaturalApproachSign(f, assignedPellet.x, assignedPellet.y);
-    b.approachSign = rank % 2 === 0 ? naturalSign : (naturalSign === 1 ? -1 : 1);
-
-    if (!b.hasPerceivedTarget) {
-      b.perceivedX = assignedPellet.x;
-      b.perceivedY = assignedPellet.y;
-      b.hasPerceivedTarget = true;
-    }
-  }
-}
-
-export function reactFishToClick(
-  fishes: KoiFish[],
-  clickX: number,
-  clickY: number,
-  _sensitivity: number
-): void {
-  for (let i = 0; i < fishes.length; i++) {
-    const f = fishes[i];
-    f.brain.perceivedX = clickX;
-    f.brain.perceivedY = clickY;
-    f.brain.hasPerceivedTarget = true;
-  }
 }
 
 /* -------------------------------------------------------------------------
@@ -672,10 +624,9 @@ function steerBehavior(f: KoiFish, fishes: KoiFish[], w: number, h: number, dt: 
   }
 }
 
-function applyCuriosityAndFoodSteering(
+function applyCuriositySteering(
   f: KoiFish,
   pointer: PondPointerState,
-  food: PondFoodPellet[],
   w: number,
   h: number,
   dt: number
@@ -683,39 +634,8 @@ function applyCuriosityAndFoodSteering(
   const b = f.brain;
   const rMin = turnRadius(f);
 
-  let targetPellet: PondFoodPellet | null = null;
-  if (food.length > 0) {
-    for (let i = 0; i < food.length; i++) {
-      const p = food[i];
-      if (p.active && p.id === b.foodTargetId) {
-        targetPellet = p;
-        break;
-      }
-    }
-    if (!targetPellet) {
-      let bestDist = Infinity;
-      for (let i = 0; i < food.length; i++) {
-        const p = food[i];
-        if (!p.active) continue;
-        const d = Math.hypot(p.x - f.x, p.y - f.y);
-        if (d < bestDist) {
-          bestDist = d;
-          targetPellet = p;
-        }
-      }
-      if (targetPellet) {
-        b.foodTargetId = targetPellet.id;
-        b.approachSign = pickNaturalApproachSign(f, targetPellet.x, targetPellet.y);
-      }
-    }
-  } else {
-    b.foodTargetId = 0;
-  }
-
   const isHoverChosen = pointer.active && pointer.curiousKoiId === f.id;
-  const hasStimulus = targetPellet !== null || isHoverChosen;
-
-  if (!hasStimulus) {
+  if (!isHoverChosen) {
     b.attentionWeight *= Math.exp(-dt / 0.48);
     if (b.attentionWeight < 0.005) {
       b.attentionWeight = 0;
@@ -724,10 +644,8 @@ function applyCuriosityAndFoodSteering(
     return;
   }
 
-  const rawTx = targetPellet ? targetPellet.x : pointer.x;
-  const rawTy = targetPellet ? targetPellet.y : pointer.y;
-  const clampedTx = koiClamp(rawTx, 8, w - 8);
-  const clampedTy = koiClamp(rawTy, 8, h - 8);
+  const clampedTx = koiClamp(pointer.x, 8, w - 8);
+  const clampedTy = koiClamp(pointer.y, 8, h - 8);
 
   if (!b.hasPerceivedTarget) {
     b.perceivedX = clampedTx;
@@ -760,46 +678,28 @@ function applyCuriosityAndFoodSteering(
   let attFeedTurn = 0;
   let attSpeed = 0.85;
 
-  if (targetPellet) {
-    const spiralFactor = koiClamp((dist - 22) / (f.bodyLength * 0.65), 0, 1);
-    const spiralOffsetRad = b.approachSign * 0.36 * spiralFactor;
-    const weaveAmp = 0.28 * koiClamp((dist - 26) / (f.bodyLength * 0.95), 0.08, 1.0);
-    const sWeave = Math.sin(b.wanderPhase + f.id * 1.85) * weaveAmp;
+  const orbitR = Math.max(48, f.bodyLength * 0.38);
+  const weaveAmp = 0.32 * koiClamp((dist - orbitR * 0.7) / (f.bodyLength * 1.15), 0.14, 1.0);
+  const sWeave = Math.sin(b.wanderPhase + f.id * 1.7) * weaveAmp;
 
+  if (dist > orbitR * 1.35) {
     const rawBearing = koiAngleDiff(f.angle, directHeading);
     if (Math.abs(rawBearing) > 1.22) {
-      attHeading = wrapAngle(f.angle + b.approachSign * 1.15);
-      attFeedTurn = (b.approachSign * f.speed) / (rMin * 1.08);
-      attSpeed = 0.78;
+      attHeading = wrapAngle(f.angle + b.approachSign * 1.12);
+      attFeedTurn = (b.approachSign * f.speed) / (rMin * 1.12);
+      attSpeed = 0.76;
     } else {
-      attHeading = wrapAngle(directHeading + spiralOffsetRad + sWeave);
-      const approachEase = koiClamp(dist / (f.bodyLength * 0.85), 0, 1);
-      attSpeed = 0.62 + 0.34 * approachEase;
+      const tangentAngle = b.approachSign * Math.asin(koiClamp(orbitR / dist, 0.15, 0.82));
+      attHeading = wrapAngle(directHeading + tangentAngle + sWeave);
+      const approachEase = koiClamp((dist - orbitR) / (f.bodyLength * 1.2), 0, 1);
+      attSpeed = 0.64 + 0.26 * approachEase;
     }
   } else {
-    const orbitR = Math.max(48, f.bodyLength * 0.38);
-    const weaveAmp = 0.32 * koiClamp((dist - orbitR * 0.7) / (f.bodyLength * 1.15), 0.14, 1.0);
-    const sWeave = Math.sin(b.wanderPhase + f.id * 1.7) * weaveAmp;
-
-    if (dist > orbitR * 1.35) {
-      const rawBearing = koiAngleDiff(f.angle, directHeading);
-      if (Math.abs(rawBearing) > 1.22) {
-        attHeading = wrapAngle(f.angle + b.approachSign * 1.12);
-        attFeedTurn = (b.approachSign * f.speed) / (rMin * 1.12);
-        attSpeed = 0.76;
-      } else {
-        const tangentAngle = b.approachSign * Math.asin(koiClamp(orbitR / dist, 0.15, 0.82));
-        attHeading = wrapAngle(directHeading + tangentAngle + sWeave);
-        const approachEase = koiClamp((dist - orbitR) / (f.bodyLength * 1.2), 0, 1);
-        attSpeed = 0.64 + 0.26 * approachEase;
-      }
-    } else {
-      const radialAngle = Math.atan2(f.y - b.perceivedY, f.x - b.perceivedX);
-      const delta = koiClamp(((dist - orbitR) / orbitR) * 1.15, -0.85, 0.85);
-      attHeading = wrapAngle(radialAngle + b.approachSign * (Math.PI / 2 + delta) + sWeave * 0.35);
-      attFeedTurn = (b.approachSign * f.speed) / Math.max(orbitR, rMin);
-      attSpeed = 0.56;
-    }
+    const radialAngle = Math.atan2(f.y - b.perceivedY, f.x - b.perceivedX);
+    const delta = koiClamp(((dist - orbitR) / orbitR) * 1.15, -0.85, 0.85);
+    attHeading = wrapAngle(radialAngle + b.approachSign * (Math.PI / 2 + delta) + sWeave * 0.35);
+    attFeedTurn = (b.approachSign * f.speed) / Math.max(orbitR, rMin);
+    attSpeed = 0.56;
   }
 
   steerOut.heading = wrapAngle(steerOut.heading + koiAngleDiff(steerOut.heading, attHeading) * wAtt);
@@ -1070,8 +970,6 @@ function computeAvoidance(fishes: KoiFish[], av: Avoidance): void {
 function stepKoi(
   fishes: KoiFish[],
   pointer: PondPointerState,
-  food: PondFoodPellet[],
-  pond: PondEnvironment,
   av: Avoidance,
   w: number,
   h: number,
@@ -1100,7 +998,7 @@ function stepKoi(
     }
 
     steerBehavior(f, fishes, w, h, dt);
-    applyCuriosityAndFoodSteering(f, pointer, food, w, h, dt);
+    applyCuriositySteering(f, pointer, w, h, dt);
 
     let desired = applyWalls(f, steerOut.heading, w, h, steerOut.wallGain);
     b.avoidBias +=
@@ -1155,21 +1053,6 @@ function stepKoi(
 
     sampleSpineFromTrail(f);
 
-    if (food.length > 0) {
-      const snoutX = f.x + Math.cos(f.angle) * (f.maxHalfWidth * 0.36);
-      const snoutY = f.y + Math.sin(f.angle) * (f.maxHalfWidth * 0.36);
-      const eatRadius = Math.max(20, f.maxHalfWidth * 0.92);
-      for (let pIdx = 0; pIdx < food.length; pIdx++) {
-        const pellet = food[pIdx];
-        if (!pellet.active) continue;
-        if (Math.hypot(pellet.x - snoutX, pellet.y - snoutY) <= eatRadius + pellet.radius) {
-          pellet.active = false;
-          pond.spawnRipple(pellet.x, pellet.y, 58, 0.52, 48);
-          break;
-        }
-      }
-    }
-
     const curvTarget = koiClamp((f.turnRate / Math.max(f.speed, 20)) * 95, -0.65, 0.65);
     f.curvature = koiLerp(f.curvature, curvTarget, koiClamp(dt * 6, 0, 1));
 
@@ -1183,10 +1066,8 @@ export function updateKoiSimulation(
   fishes: KoiFish[],
   pond: PondEnvironment,
   pointer: PondPointerState,
-  food: PondFoodPellet[],
   width: number,
   height: number,
-  time: number,
   dt: number,
   config: KoiPondConfig
 ): void {
@@ -1213,34 +1094,11 @@ export function updateKoiSimulation(
     pointer.curiousKoiId = 0;
   }
 
-  if (food.length > 0) {
-    const cur = samplePond(time);
-    const drag = Math.exp(-effDt * 2.4);
-    for (let i = food.length - 1; i >= 0; i--) {
-      const p = food[i];
-      p.age += effDt;
-      if (!p.active || p.age >= p.maxAge) {
-        food.splice(i, 1);
-        continue;
-      }
-      p.vx *= drag;
-      p.vy *= drag;
-      p.x = koiClamp(p.x + (p.vx + cur.vx * 3.5) * effDt, 16, width - 16);
-      p.y = koiClamp(p.y + (p.vy + cur.vy * 3.5) * effDt, 16, height - 16);
-    }
-  }
-
   const steps = Math.max(1, Math.ceil(effDt / MAX_STEP));
   const h = effDt / steps;
   const av = getAvoidance(fishes.length);
   for (let s = 0; s < steps; s++) {
-    stepKoi(fishes, pointer, food, pond, av, width, height, h);
-  }
-
-  for (let i = food.length - 1; i >= 0; i--) {
-    if (!food[i].active) {
-      food.splice(i, 1);
-    }
+    stepKoi(fishes, pointer, av, width, height, h);
   }
 
   for (let i = 0; i < fishes.length; i++) {
@@ -1451,20 +1309,6 @@ function samplePond(time: number): { vx: number; vy: number } {
     vx: Math.sin(t) * 0.5 + Math.cos(t * 0.6) * 0.28,
     vy: -Math.cos(t * 0.8) * 0.5 + Math.sin(t * 0.5) * 0.28
   };
-}
-
-export function pondFishSplash(fish: PondFish[], x: number, y: number): void {
-  const r = 110;
-  for (const f of fish) {
-    const dx = f.x - x;
-    const dy = f.y - y;
-    const d = Math.hypot(dx, dy);
-    if (d > r || d < 1e-3) continue;
-    const k = (1 - d / r) * 140;
-    f.vx += (dx / d) * k;
-    f.vy += (dy / d) * k;
-    f.alarm = 0.65;
-  }
 }
 
 export function rescalePondFish(
