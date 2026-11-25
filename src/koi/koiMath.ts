@@ -18,7 +18,7 @@ export function koiSmoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
-export function koiWrapAngle(a: number): number {
+function koiWrapAngle(a: number): number {
   let r = (a + Math.PI) % KOI_TAU;
   if (r < 0) r += KOI_TAU;
   return r - Math.PI;
@@ -79,45 +79,6 @@ export function fbm2D(x: number, y: number, seed = 0): number {
   const v1 = valueNoise2D(x, y, seed);
   const v2 = valueNoise2D(x * 2.13 + 17.3, y * 2.13 - 9.7, seed + 101);
   return (v1 * 0.68 + v2 * 0.32) * 2 - 1;
-}
-
-/**
- * Divergence-free 2D curl flow field for subtle ambient pond currents.
- */
-export function samplePondCurrent(x: number, y: number, time: number): { vx: number; vy: number } {
-  const scale = 0.0032;
-  const sx = x * scale;
-  const sy = y * scale;
-  const t = time * 0.18;
-
-  const vx =
-    Math.sin(sy * 1.7 + t) * 0.55 +
-    Math.cos((sx + sy) * 1.15 - t * 0.7) * 0.45;
-  const vy =
-    -Math.cos(sx * 1.7 - t * 0.85) * 0.55 +
-    Math.sin((sx - sy) * 1.15 + t * 0.65) * 0.45;
-
-  return { vx, vy };
-}
-
-/**
- * Interpolates two `#rrggbb` hex colours by t in [0, 1] (used for theme transitions).
- */
-export function lerpHexColor(a: string, b: string, t: number): string {
-  const ah = a.replace('#', '');
-  const bh = b.replace('#', '');
-  const av = parseInt(ah.length === 3 ? ah.replace(/./g, (c) => c + c) : ah, 16);
-  const bv = parseInt(bh.length === 3 ? bh.replace(/./g, (c) => c + c) : bh, 16);
-  const ar = (av >> 16) & 255;
-  const ag = (av >> 8) & 255;
-  const ab = av & 255;
-  const br = (bv >> 16) & 255;
-  const bg = (bv >> 8) & 255;
-  const bb = bv & 255;
-  const r = Math.round(ar + (br - ar) * koiClamp(t, 0, 1));
-  const g = Math.round(ag + (bg - ag) * koiClamp(t, 0, 1));
-  const bl = Math.round(ab + (bb - ab) * koiClamp(t, 0, 1));
-  return `rgb(${r},${g},${bl})`;
 }
 
 /**

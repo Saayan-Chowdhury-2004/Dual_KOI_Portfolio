@@ -670,6 +670,374 @@ export function bakeMizuhikiPortraitCoinDataUrl(
   img.src = sourceUri;
 }
 
+
+/**
+ * Bakes a 2x-retina sculpted 3D cast-metal Japanese coin medallion featuring an
+ * embossed hanging scroll silhouette (turned top/bottom rollers with end knobs,
+ * hanging cord bow, unfurled scroll body) and crisp recessed/relief 秘術 kanji
+ * strokes matching the antique brass (Mokkotsu) and ink-black / silver patina
+ * (Sumi-e Day/Night) finish of the Profile medallion.
+ */
+export function bakeMizuhikiScrollCoinDataUrl(
+  variant: MizuhikiCoinVariant,
+  onReady: (dataUrl: string) => void
+): void {
+  const renderScrollCoin = (fontReadyTag: string) => {
+    const cacheKey = `scroll-hijutsu-v1|${variant}|${fontReadyTag}`;
+    const cached = coinBakeCache.get(cacheKey);
+    if (cached) {
+      onReady(cached);
+      return;
+    }
+
+    const size = 192;
+    const cx = size * 0.5;
+    const cy = size * 0.5;
+    const outerR = size * 0.496;
+    const rimInnerR = size * 0.402;
+
+    const out = document.createElement("canvas");
+    out.width = size;
+    out.height = size;
+    const ctx = out.getContext("2d");
+    if (!ctx) return;
+
+    const isBrass = variant === "brass";
+    const isSumieNight = variant === "sumie-night";
+
+    // Build high-contrast scroll silhouette mask (raised cast relief)
+    const silCanvas = document.createElement("canvas");
+    silCanvas.width = size;
+    silCanvas.height = size;
+    const sctx = silCanvas.getContext("2d")!;
+    sctx.fillStyle = "#ffffff";
+    sctx.strokeStyle = "#ffffff";
+    sctx.lineCap = "round";
+    sctx.lineJoin = "round";
+
+    // Hanging cord arc + bow above top roller
+    sctx.lineWidth = 4.2;
+    sctx.beginPath();
+    sctx.moveTo(cx - 21, cy - 36);
+    sctx.quadraticCurveTo(cx, cy - 58, cx + 21, cy - 36);
+    sctx.stroke();
+
+    // Small knot bead at apex of hanging cord
+    sctx.beginPath();
+    sctx.arc(cx, cy - 48, 4.4, 0, Math.PI * 2);
+    sctx.fill();
+
+    // Scroll body (slight organic inward waist)
+    const bodyTop = cy - 34;
+    const bodyBot = cy + 38;
+    const bodyHalfW = 28;
+    sctx.beginPath();
+    sctx.moveTo(cx - bodyHalfW, bodyTop);
+    sctx.lineTo(cx + bodyHalfW, bodyTop);
+    sctx.quadraticCurveTo(cx + bodyHalfW - 2.2, cy + 2, cx + bodyHalfW, bodyBot);
+    sctx.lineTo(cx - bodyHalfW, bodyBot);
+    sctx.quadraticCurveTo(cx - bodyHalfW + 2.2, cy + 2, cx - bodyHalfW, bodyTop);
+    sctx.closePath();
+    sctx.fill();
+
+    // Top & bottom turned scroll rollers (jiku) with end knobs (jikugi)
+    const drawRoller = (ry: number, barHalfW: number, barH: number) => {
+      const r = barH * 0.5;
+      sctx.beginPath();
+      sctx.roundRect(cx - barHalfW, ry - r, barHalfW * 2, barH, r);
+      sctx.fill();
+      // Left & right end cap knobs
+      for (const dir of [-1, 1]) {
+        sctx.beginPath();
+        sctx.roundRect(cx + dir * (barHalfW + 1.5) - 4.2, ry - (r + 1.6), 8.4, barH + 3.2, 3.6);
+        sctx.fill();
+      }
+    };
+    drawRoller(bodyTop - 1, 35, 9.5);
+    drawRoller(bodyBot + 1, 35, 10.5);
+
+    // Recessed patina mask (roller creases + carved 秘術 kanji)
+    const recessCanvas = document.createElement("canvas");
+    recessCanvas.width = size;
+    recessCanvas.height = size;
+    const rctx = recessCanvas.getContext("2d")!;
+    rctx.fillStyle = "#ffffff";
+    rctx.strokeStyle = "#ffffff";
+    rctx.lineCap = "round";
+
+    // Subtle horizontal grooves separating rollers from parchment body
+    rctx.lineWidth = 2.6;
+    rctx.beginPath();
+    rctx.moveTo(cx - bodyHalfW + 1, bodyTop + 4.2);
+    rctx.lineTo(cx + bodyHalfW - 1, bodyTop + 4.2);
+    rctx.moveTo(cx - bodyHalfW + 1, bodyBot - 4.6);
+    rctx.lineTo(cx + bodyHalfW - 1, bodyBot - 4.6);
+    rctx.stroke();
+
+    // Side scroll border framing hairlines
+    rctx.lineWidth = 1.6;
+    rctx.beginPath();
+    rctx.moveTo(cx - bodyHalfW + 5.5, bodyTop + 8);
+    rctx.lineTo(cx - bodyHalfW + 5.5, bodyBot - 8.5);
+    rctx.moveTo(cx + bodyHalfW - 5.5, bodyTop + 8);
+    rctx.lineTo(cx + bodyHalfW - 5.5, bodyBot - 8.5);
+    rctx.stroke();
+
+    // Crisp vertical 秘術 characters inside the scroll face
+    rctx.textAlign = "center";
+    rctx.textBaseline = "middle";
+    rctx.font = `700 26px "Noto Serif JP", "Yu Mincho", "Hiragino Mincho ProN", serif`;
+    rctx.fillText("秘", cx, cy - 11.5);
+    rctx.fillText("術", cx, cy + 16.5);
+
+    // Specular glint mask along top roller, cord, and bottom roller top edge
+    const glintCanvas = document.createElement("canvas");
+    glintCanvas.width = size;
+    glintCanvas.height = size;
+    const gctx = glintCanvas.getContext("2d")!;
+    gctx.strokeStyle = "#ffffff";
+    gctx.lineCap = "round";
+    gctx.lineWidth = 2.2;
+    gctx.beginPath();
+    gctx.moveTo(cx - 32, bodyTop - 3.6);
+    gctx.lineTo(cx + 32, bodyTop - 3.6);
+    gctx.moveTo(cx - 32, bodyBot - 1.6);
+    gctx.lineTo(cx + 32, bodyBot - 1.6);
+    gctx.stroke();
+
+    const tint = (mask: HTMLCanvasElement, fillStyle: string | CanvasGradient): HTMLCanvasElement => {
+      const c = document.createElement("canvas");
+      c.width = size;
+      c.height = size;
+      const cctx = c.getContext("2d")!;
+      cctx.drawImage(mask, 0, 0);
+      cctx.globalCompositeOperation = "source-in";
+      cctx.fillStyle = fillStyle;
+      cctx.fillRect(0, 0, size, size);
+      return c;
+    };
+
+    ctx.save();
+
+    // 1. Sculpted outer cast-metal rim (identical to Profile coin)
+    ctx.beginPath();
+    ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
+    const rimGrad = ctx.createLinearGradient(cx - outerR, cy - outerR, cx + outerR, cy + outerR);
+    if (isBrass) {
+      rimGrad.addColorStop(0, "#f6dd94");
+      rimGrad.addColorStop(0.24, "#cfa246");
+      rimGrad.addColorStop(0.58, "#8c6320");
+      rimGrad.addColorStop(0.86, "#573a0d");
+      rimGrad.addColorStop(1, "#362206");
+    } else if (isSumieNight) {
+      rimGrad.addColorStop(0, "#7c7568");
+      rimGrad.addColorStop(0.26, "#46423c");
+      rimGrad.addColorStop(0.62, "#24221f");
+      rimGrad.addColorStop(1, "#0d0c0b");
+    } else {
+      rimGrad.addColorStop(0, "#5e5850");
+      rimGrad.addColorStop(0.26, "#312e2a");
+      rimGrad.addColorStop(0.65, "#191816");
+      rimGrad.addColorStop(1, "#090808");
+    }
+    ctx.fillStyle = rimGrad;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, outerR - 1.2, 0, Math.PI * 2);
+    ctx.lineWidth = 2.0;
+    ctx.strokeStyle = isBrass
+      ? "rgba(255, 244, 200, 0.50)"
+      : isSumieNight
+        ? "rgba(220, 212, 196, 0.34)"
+        : "rgba(180, 172, 158, 0.26)";
+    ctx.stroke();
+
+    // 2. Recessed cast interior field
+    ctx.beginPath();
+    ctx.arc(cx, cy, rimInnerR, 0, Math.PI * 2);
+    const fieldGrad = ctx.createRadialGradient(
+      cx - rimInnerR * 0.28,
+      cy - rimInnerR * 0.3,
+      rimInnerR * 0.08,
+      cx,
+      cy,
+      rimInnerR
+    );
+    if (isBrass) {
+      fieldGrad.addColorStop(0, "#946426");
+      fieldGrad.addColorStop(0.54, "#6b4317");
+      fieldGrad.addColorStop(0.88, "#4a2b0d");
+      fieldGrad.addColorStop(1, "#311b07");
+    } else if (isSumieNight) {
+      fieldGrad.addColorStop(0, "#2d2b27");
+      fieldGrad.addColorStop(0.6, "#1b1a18");
+      fieldGrad.addColorStop(1, "#100f0e");
+    } else {
+      fieldGrad.addColorStop(0, "#252320");
+      fieldGrad.addColorStop(0.6, "#161513");
+      fieldGrad.addColorStop(1, "#0c0b0a");
+    }
+    ctx.fillStyle = fieldGrad;
+    ctx.fill();
+
+    // Hammered cast-metal patina grain + milled bead ring
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, outerR - 1, 0, Math.PI * 2);
+    ctx.clip();
+    let seed = 4099;
+    const rand = () => {
+      seed = (seed * 16807) % 2147483647;
+      return (seed - 1) / 2147483646;
+    };
+    for (let i = 0; i < 560; i++) {
+      const gx = rand() * size;
+      const gy = rand() * size;
+      const gr = 0.8 + rand() * 1.8;
+      const bright = rand() > 0.5;
+      ctx.fillStyle = isBrass
+        ? bright
+          ? "rgba(255, 236, 175, 0.065)"
+          : "rgba(32, 18, 4, 0.085)"
+        : bright
+          ? "rgba(225, 218, 204, 0.048)"
+          : "rgba(0, 0, 0, 0.11)";
+      ctx.beginPath();
+      ctx.arc(gx, gy, gr, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const beadR = (outerR + rimInnerR) * 0.5;
+    const beadCount = 40;
+    for (let b = 0; b < beadCount; b++) {
+      const ang = (b / beadCount) * Math.PI * 2;
+      const bx = cx + Math.cos(ang) * beadR;
+      const by = cy + Math.sin(ang) * beadR;
+      if (Math.abs(bx - cx) < 13.5) continue;
+      ctx.fillStyle = isBrass
+        ? "rgba(255, 240, 185, 0.34)"
+        : isSumieNight
+          ? "rgba(180, 174, 160, 0.25)"
+          : "rgba(150, 144, 134, 0.20)";
+      ctx.beginPath();
+      ctx.arc(bx, by, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // 3. Sculpted 3D Embossed Scroll Relief (clipped inside inner bezel)
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, rimInnerR - 0.8, 0, Math.PI * 2);
+    ctx.clip();
+
+    const shadowMask = tint(
+      silCanvas,
+      isBrass ? "rgba(24, 12, 2, 0.82)" : "rgba(0, 0, 0, 0.88)"
+    );
+    ctx.drawImage(shadowMask, 2.5, 3.1);
+
+    const hiMask = tint(
+      silCanvas,
+      isBrass ? "rgba(255, 248, 212, 0.88)" : "rgba(255, 252, 244, 0.80)"
+    );
+    ctx.drawImage(hiMask, -1.7, -1.7);
+
+    const faceGrad = ctx.createLinearGradient(
+      cx - rimInnerR,
+      cy - rimInnerR,
+      cx + rimInnerR,
+      cy + rimInnerR
+    );
+    if (isBrass) {
+      faceGrad.addColorStop(0, "#fff2bd");
+      faceGrad.addColorStop(0.45, "#e8be62");
+      faceGrad.addColorStop(1, "#b4822b");
+    } else if (isSumieNight) {
+      faceGrad.addColorStop(0, "#f5efe2");
+      faceGrad.addColorStop(0.55, "#d8d0be");
+      faceGrad.addColorStop(1, "#a29a8a");
+    } else {
+      faceGrad.addColorStop(0, "#f0e9db");
+      faceGrad.addColorStop(0.55, "#cfc7b5");
+      faceGrad.addColorStop(1, "#948c7c");
+    }
+    ctx.drawImage(tint(silCanvas, faceGrad), 0, 0);
+
+    // Subtle bottom-right catch-light lip inside engraved 秘術 strokes
+    ctx.drawImage(
+      tint(recessCanvas, isBrass ? "rgba(255, 246, 206, 0.48)" : "rgba(255, 252, 244, 0.42)"),
+      1.0,
+      1.0
+    );
+
+    // Deep cast patina engraving for roller grooves & 秘術 characters
+    ctx.drawImage(
+      tint(recessCanvas, isBrass ? "rgba(42, 22, 4, 0.88)" : "rgba(12, 11, 10, 0.90)"),
+      0,
+      0
+    );
+
+    // Crisp specular roller glints
+    ctx.drawImage(
+      tint(glintCanvas, isBrass ? "rgba(255, 251, 232, 0.82)" : "rgba(255, 253, 247, 0.78)"),
+      0,
+      0
+    );
+    ctx.restore();
+
+    // 4. Inner recessed bezel lip shadow
+    ctx.beginPath();
+    ctx.arc(cx, cy, rimInnerR, 0, Math.PI * 2);
+    const innerLip = ctx.createLinearGradient(
+      cx - rimInnerR,
+      cy - rimInnerR,
+      cx + rimInnerR,
+      cy + rimInnerR
+    );
+    if (isBrass) {
+      innerLip.addColorStop(0, "rgba(28, 16, 4, 0.85)");
+      innerLip.addColorStop(0.5, "rgba(60, 38, 10, 0.35)");
+      innerLip.addColorStop(1, "rgba(248, 224, 150, 0.72)");
+    } else {
+      innerLip.addColorStop(0, "rgba(0, 0, 0, 0.88)");
+      innerLip.addColorStop(0.5, "rgba(18, 16, 14, 0.42)");
+      innerLip.addColorStop(1, isSumieNight ? "rgba(190, 182, 166, 0.48)" : "rgba(150, 144, 134, 0.36)");
+    }
+    ctx.lineWidth = 3.2;
+    ctx.strokeStyle = innerLip;
+    ctx.stroke();
+
+    // 5. Pierced Top & Bottom Cord Eyelets
+    const eyeletOffset = (outerR + rimInnerR) * 0.5;
+    for (const ey of [cy - eyeletOffset, cy + eyeletOffset]) {
+      ctx.beginPath();
+      ctx.arc(cx, ey, 5.2, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(10, 6, 3, 0.92)";
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = isBrass
+        ? "rgba(246, 218, 138, 0.65)"
+        : "rgba(160, 152, 138, 0.45)";
+      ctx.stroke();
+    }
+
+    ctx.restore();
+
+    const dataUrl = out.toDataURL("image/png");
+    coinBakeCache.set(cacheKey, dataUrl);
+    onReady(dataUrl);
+  };
+
+  renderScrollCoin("init");
+  if (typeof document !== "undefined" && document.fonts?.ready) {
+    document.fonts.ready.then(() => {
+      renderScrollCoin("fonts");
+    });
+  }
+}
+
 interface ChainNodeState {
   el: HTMLElement;
   sheenEl: HTMLElement | null;
@@ -688,7 +1056,6 @@ interface ChainNodeState {
  * - Coupled damped-pendulum sway physics triggered gently on cursor hover & coin flips
  */
 export class MizuhikiCoinChain {
-  private container: HTMLElement;
   private svgEl: SVGSVGElement;
   private nodes: ChainNodeState[] = [];
   private artStyle: KoiArtStyle = "mokkotsu";
@@ -712,8 +1079,6 @@ export class MizuhikiCoinChain {
   private gTassel: SVGGElement;
 
   constructor(container: HTMLElement, coinEls: HTMLElement[]) {
-    this.container = container;
-
     const svg = document.createElementNS(SVG_NS, "svg");
     svg.setAttribute("class", "ms-mizuhiki-svg");
     svg.setAttribute("aria-hidden", "true");

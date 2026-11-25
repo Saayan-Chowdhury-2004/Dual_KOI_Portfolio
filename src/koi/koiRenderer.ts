@@ -9,8 +9,6 @@
 
 import { RED_CARD_TEXTURE_URI, RED_KOI_BORDER_URI, KOI_PORTRAIT_DEFAULT_URI, KOI_PORTRAIT_INK_URI, KOI_PORTRAIT_REAL_URI } from "./columnArtData";
 import {
-  FLIP_OPEN_DURATION,
-  REDUCED_MOTION_FADE_DURATION,
   TILE_MAX_EXTRUDE_PX,
   buildRippleFieldConfig,
   computeAlignedTileSize,
@@ -42,7 +40,6 @@ import type {
   KoiFish,
   KoiPondConfig,
   OrganicPatch,
-  PondFish,
   PondFoodPellet,
   PondPalette,
   PondThemeName,
@@ -60,9 +57,6 @@ export const KOI_ART_STYLES: readonly KoiArtStyleMeta[] = [
   { id: "mokkotsu", fullLabel: "Mokkotsu Watercolor" },
   { id: "sumie", fullLabel: "Sumi-e Zen Ink Wash" },
 ];
-
-const THEME_TRANSITION_MS = 850;
-const MAX_RENDERED_MINNOWS = 16;
 
 export interface PondViewportRect {
   x: number;
@@ -102,7 +96,6 @@ export class KoiPondRenderer {
   private fontFamily = '"KanjiBrutalist", Georgia, "Times New Roman", serif';
   private configuredTheme: PondThemeName = "light-pond";
   private currentPalette: PondPalette = POND_PALETTES["light-pond"];
-  private previousPalette: PondPalette | null = null;
   private themeTransitionStart = 0;
   private transitioning = false;
   private themeProgress = 1;
@@ -135,8 +128,6 @@ export class KoiPondRenderer {
 
   private timeOfDayHours = 12.0;
 
-  private parchmentCanvas: HTMLCanvasElement | null = null;
-  private parchmentKey = "";
   private parchmentCache: Map<string, HTMLCanvasElement> = new Map();
   private sumiePaperCache: Map<string, SumiePaperBundle> = new Map();
   private sumieMapleCache: Map<string, HTMLCanvasElement[]> = new Map();
@@ -158,29 +149,15 @@ export class KoiPondRenderer {
   }> = [];
   private sumieFlowersLastTime = -1;
 
-  private pebbleBedCanvas: HTMLCanvasElement | null = null;
-  private pebbleBedKey = "";
   private pebbleBedCache: Map<string, HTMLCanvasElement> = new Map();
 
-  private causticTileCanvas: HTMLCanvasElement | null = null;
-  private causticTileKey = "";
   private causticWorkCanvas: HTMLCanvasElement | null = null;
   private shadowWorkCanvas: HTMLCanvasElement | null = null;
   private shadowBlurCanvas: HTMLCanvasElement | null = null;
-  private canopyShadowCanvas: HTMLCanvasElement | null = null;
-  private canopyShadowKey = "";
-  private sakuraDeepCanvas: HTMLCanvasElement | null = null;
-  private sakuraMidCanvas: HTMLCanvasElement | null = null;
-  private sakuraNearCanvas: HTMLCanvasElement | null = null;
-  private sakuraCanopyKey = "";
-  private kumikoLanternCanvas: HTMLCanvasElement | null = null;
-  private kumikoLanternKey = "";
   private causticMaskCanvas: HTMLCanvasElement | null = null;
-  private botanicalSpriteKey = "";
   private lotusLeafSprites: HTMLCanvasElement[] = [];
   private companionLeafSprites: HTMLCanvasElement[] = [];
   private pinkLotusSprites: HTMLCanvasElement[] = [];
-  private mapleLeafSprites: HTMLCanvasElement[] = [];
   private readonly stemLockedEdges: ("left" | "right" | "top" | "bottom")[] = [];
 
   // Asynchronous per-pad sway state + secondary phase lag + click-ripple sway for all 9 lotus leaves
@@ -303,7 +280,6 @@ export class KoiPondRenderer {
     maxRadius: number;
     strength: number;
   }[] = [];
-  private lastBotanicalUpdateAt = 0;
   private causticGLCanvas: HTMLCanvasElement | null = null;
   private causticGL: WebGLRenderingContext | null = null;
   private causticGLProg: WebGLProgram | null = null;
@@ -317,22 +293,10 @@ export class KoiPondRenderer {
   private rawPointerX = -1;
   private rawPointerY = -1;
   private rawPointerActive = false;
-  private profileTargetOpen = false;
   private flashlightEnabled = true;
   private hasAutoActivatedFlashlightOnce = false;
   private flashlightDispersal = 1;
   private lastFlashUpdateAt = 0;
-
-  // Continuous mouse-interaction water wavelets
-  private readonly mouseWaves: {
-    x: number;
-    y: number;
-    r: number;
-    maxR: number;
-    born: number;
-  }[] = [];
-  private lastWaveSpawnX = -9999;
-  private lastWaveSpawnY = -9999;
 
   private redBorderImg: HTMLImageElement | null = null;
   private redBorderLoaded = false;
@@ -389,7 +353,6 @@ export class KoiPondRenderer {
   private readonly leftY = new Float32Array(SPINE_NODE_COUNT);
   private readonly rightX = new Float32Array(SPINE_NODE_COUNT);
   private readonly rightY = new Float32Array(SPINE_NODE_COUNT);
-  private readonly ptScratch = { x: 0, y: 0, tx: 1, ty: 0, nx: 0, ny: 1 };
 
   constructor() {
     if (typeof Image !== "undefined") {
@@ -432,21 +395,12 @@ export class KoiPondRenderer {
   }
 
   public destroy(): void {
-    this.parchmentCanvas = null;
     this.parchmentCache.clear();
-    this.pebbleBedCanvas = null;
     this.pebbleBedCache.clear();
-    this.causticTileCanvas = null;
     this.causticWorkCanvas = null;
     this.shadowWorkCanvas = null;
     this.shadowBlurCanvas = null;
-    this.canopyShadowCanvas = null;
-    this.sakuraDeepCanvas = null;
-    this.sakuraMidCanvas = null;
-    this.sakuraNearCanvas = null;
-    this.kumikoLanternCanvas = null;
     this.causticMaskCanvas = null;
-    this.botanicalSpriteKey = "";
     this.causticGLCanvas = null;
     this.causticGL = null;
     this.causticGLProg = null;
@@ -784,7 +738,6 @@ export class KoiPondRenderer {
     }
 
     if (immediate) {
-      this.previousPalette = null;
       this.transitioning = false;
       this.themeProgress = 1;
       this.sunCycleTargetLight = !nextNight;
@@ -857,8 +810,7 @@ export class KoiPondRenderer {
     this.rawPointerActive = active;
   }
 
-  public setProfileTargetOpen(open: boolean): void {
-    this.profileTargetOpen = open;
+  public setProfileTargetOpen(_open: boolean): void {
   }
 
   /**
@@ -1147,7 +1099,6 @@ export class KoiPondRenderer {
 
   public computeLeftFrameRect(viewW: number, viewH: number, progress: number): PondViewportRect {
     const p = koiClamp(progress, 0, 1);
-    const ease = p * p * p * (p * (p * 6 - 15) + 10);
 
     const isNarrow = viewW < 820;
     const targetX = isNarrow ? 16 : Math.round(koiClamp(24, 38, viewW * 0.022));
@@ -1183,7 +1134,6 @@ export class KoiPondRenderer {
     if (currentlyLight !== isLight) {
       const curDaylight = this.getDaylightFactor();
       this.sunCycleTargetLight = isLight;
-      this.previousPalette = POND_PALETTES[currentlyLight ? "light-pond" : "black-pond"];
       this.configuredTheme = isLight ? "light-pond" : "black-pond";
       this.currentPalette = POND_PALETTES[this.configuredTheme];
 
@@ -1231,7 +1181,6 @@ export class KoiPondRenderer {
     const startHours = this.timeOfDayHours;
 
     this.sunCycleTargetLight = nextLight;
-    this.previousPalette = POND_PALETTES[currentlyLight ? "light-pond" : "black-pond"];
     this.configuredTheme = nextLight ? "light-pond" : "black-pond";
     this.currentPalette = POND_PALETTES[this.configuredTheme];
 
@@ -1287,7 +1236,6 @@ export class KoiPondRenderer {
 
     if (rawT >= 1) {
       this.transitioning = false;
-      this.previousPalette = null;
       this.themeProgress = 1;
       this.timeOfDayHours = this.sunCycleTargetLight ? 12.0 : 18.5;
     }
@@ -1313,15 +1261,11 @@ export class KoiPondRenderer {
     const h = Math.max(1, Math.round(height));
     if (this.artStyle === "sumie") {
       const bundle = this.ensureSumiePaperBundle(w, h, isLight);
-      this.parchmentCanvas = bundle.canvas;
-      this.parchmentKey = `${w}x${h}:sumie:${isLight ? "L" : "D"}`;
       return bundle.canvas;
     }
     const key = `${w}x${h}:${isLight ? "washi-day-v3" : "washi-night-v3"}`;
     const cached = this.parchmentCache.get(key);
     if (cached) {
-      this.parchmentCanvas = cached;
-      this.parchmentKey = key;
       return cached;
     }
     if (this.parchmentCache.size >= 4) {
@@ -1332,8 +1276,6 @@ export class KoiPondRenderer {
     canvas.width = w;
     canvas.height = h;
     this.parchmentCache.set(key, canvas);
-    this.parchmentCanvas = canvas;
-    this.parchmentKey = key;
 
     const pCtx = canvas.getContext("2d");
     if (!pCtx) return canvas;
@@ -2115,7 +2057,7 @@ export class KoiPondRenderer {
     isDeepStem: boolean,
     stemIdx: number,
     unit: number,
-    isLight: boolean,
+    _isLight: boolean,
     style: KoiArtStyle,
     customBasePx?: number,
     customTipPx?: number
@@ -2818,7 +2760,6 @@ export class KoiPondRenderer {
     const key = `${quantUnit}:${isLight ? "L" : "D"}:${style}:v7`;
     const cachedSet = this.botanicalSpriteCacheMap.get(key);
     if (cachedSet && cachedSet.lotus.length === 9 && cachedSet.companion.length === 18) {
-      this.botanicalSpriteKey = key;
       this.lotusLeafSprites = cachedSet.lotus;
       this.companionLeafSprites = cachedSet.companion;
       this.pinkLotusSprites = cachedSet.pinkLotus;
@@ -2827,7 +2768,6 @@ export class KoiPondRenderer {
     if (this.botanicalSpriteCacheMap.size >= 6) {
       this.botanicalSpriteCacheMap.clear();
     }
-    this.botanicalSpriteKey = key;
 
     const specs = this.getLotusPadSpecs();
     this.lotusLeafSprites = [];
@@ -3997,33 +3937,6 @@ export class KoiPondRenderer {
   }
 
   /**
-   * Paints a serene school of at most `MAX_RENDERED_MINNOWS = 16` graceful spindle-shaped
-   * medaka silhouettes adapted to the active artistic style.
-   */
-  private paintBrushMinnows(
-    _ctx: CanvasRenderingContext2D,
-    _minnows: PondFish[],
-    _isLight: boolean
-  ): void {
-    // Tiny background fishes/organisms removed per user request
-  }
-
-  /**
-   * Paints a single Koi in the active artistic style (`mokkotsu`, `sumie`, or `ukiyoe`).
-   */
-  /**
-   * Computes a smooth vertical swimming depth `z in [0.05, 0.92]` for each Koi (`0` = surface, `1` = deep):
-   * - Stratified base depth per fish (`0.14`, `0.48`, `0.82`) + gentle slow diving/ascending wave
-   * - Drives perspective scale, blue water-column tinting, and floor shadow separation distance.
-   */
-  private getKoiDepthFactor(fishIndex: number, time: number): number {
-    const baseTiers = [0.14, 0.52, 0.82, 0.32, 0.68];
-    const base = baseTiers[fishIndex % baseTiers.length];
-    const wave = Math.sin(time * 0.26 + fishIndex * 2.15) * 0.12;
-    return koiClamp(base + wave, 0.06, 0.92);
-  }
-
-  /**
    * Computes the opaque RGB luminance multiplier [0.36..1.0] for a Koi fish so that:
    * - In daytime (`daylight = 1`), Koi have full vibrant luminance (`1.0`).
    * - During dusk and in Dark Mode (`!isLight`), unlit Koi outside the flashlight beam
@@ -4054,20 +3967,6 @@ export class KoiPondRenderer {
       return nightLuma;
     }
     return koiLerp(nightLuma, 1.0, Math.pow(daylight, 0.78));
-  }
-
-  /**
-   * Blends a koi pigment RGB smoothly with the dark night-water ambient tone
-   * based on `koiExposure` so fish settle naturally into the night pond.
-   */
-  private applyNightWaterBlend(
-    rgb: [number, number, number],
-    koiExposure: number
-  ): [number, number, number] {
-    const nightWaterTint: [number, number, number] = [20, 24, 21];
-    const lit = darkenRgb(rgb, koiClamp(koiExposure, 0.22, 1.0));
-    const nightAmt = koiClamp((1.0 - koiExposure) * 0.55, 0, 0.55);
-    return mixRgb(lit, nightWaterTint, nightAmt);
   }
 
   private sampleSpineFrame(
@@ -6795,8 +6694,6 @@ export class KoiPondRenderer {
     const key = `${w}x${h}:${isLight ? "light-moss-v7" : "dark-moss-v7"}:${style}`;
     const cached = this.pebbleBedCache.get(key);
     if (cached) {
-      this.pebbleBedCanvas = cached;
-      this.pebbleBedKey = key;
       return cached;
     }
     if (this.pebbleBedCache.size >= 4) {
@@ -6807,8 +6704,6 @@ export class KoiPondRenderer {
     canvas.width = w;
     canvas.height = h;
     this.pebbleBedCache.set(key, canvas);
-    this.pebbleBedCanvas = canvas;
-    this.pebbleBedKey = key;
 
     const pCtx = canvas.getContext("2d");
     if (!pCtx) return canvas;
@@ -7242,8 +7137,6 @@ export class KoiPondRenderer {
     const key = `${style}:${isLight ? "light" : "dark"}:worley-v3`;
     const cached = this.causticTileCache.get(key);
     if (cached) {
-      this.causticTileCanvas = cached;
-      this.causticTileKey = key;
       return cached;
     }
     if (this.causticTileCache.size >= 6) {
@@ -7255,8 +7148,6 @@ export class KoiPondRenderer {
     canvas.width = size;
     canvas.height = size;
     this.causticTileCache.set(key, canvas);
-    this.causticTileCanvas = canvas;
-    this.causticTileKey = key;
 
     const cCtx = canvas.getContext("2d");
     if (!cCtx) return canvas;
@@ -7561,7 +7452,7 @@ export class KoiPondRenderer {
     ctx: CanvasRenderingContext2D,
     worldW: number,
     worldH: number,
-    time: number,
+    _time: number,
     isLight: boolean,
     style: KoiArtStyle
   ): void {
@@ -7695,7 +7586,6 @@ export class KoiPondRenderer {
     const tail = spine[n - 1];
     const tailHw = koiBodyHalfWidth(tail.s, fish.maxHalfWidth);
     const sway = Math.sin(fish.phase - 1.9) * fish.maxHalfWidth * 0.48;
-    const sway2 = Math.cos(fish.phase - 2.5) * fish.maxHalfWidth * 0.24;
     const peduncleTipX = tail.x - tail.tx * (tailHw * 0.32) + tail.nx * (sway * 0.24) + ox;
     const peduncleTipY = tail.y - tail.ty * (tailHw * 0.32) + tail.ny * (sway * 0.24) + oy;
 
@@ -7825,7 +7715,6 @@ export class KoiPondRenderer {
         ? koiClamp((now - this.lastFlashUpdateAt) / 1000, 0.004, 0.06)
         : 1 / 60;
     this.lastFlashUpdateAt = now;
-    this.lastBotanicalUpdateAt = now;
 
     // 1. Flashlight dispersal & smooth natural cursor follow (synced with virtual sun altitude during sunset/sunrise)
     const curDaylight = this.getDaylightFactor();
@@ -8940,7 +8829,6 @@ export class KoiPondRenderer {
     return out;
   }
 
-  private sakuraSpriteCacheKey = "";
   private floatingFlowerSprites: HTMLCanvasElement[] = [];
   private sunkenFlowerSprites: HTMLCanvasElement[] = [];
   private floatingPetalSprites: HTMLCanvasElement[] = [];
@@ -9127,7 +9015,6 @@ export class KoiPondRenderer {
     const key = `${quantUnit}:${isLight ? "L" : "D"}:${style}:sakura-water-v14`;
     const cachedSakura = this.sakuraSpriteCacheMap.get(key);
     if (cachedSakura && cachedSakura.floatingFlower.length === 4) {
-      this.sakuraSpriteCacheKey = key;
       this.floatingFlowerSprites = cachedSakura.floatingFlower;
       this.sunkenFlowerSprites = cachedSakura.sunkenFlower;
       this.floatingPetalSprites = cachedSakura.floatingPetal;
@@ -9137,7 +9024,6 @@ export class KoiPondRenderer {
     if (this.sakuraSpriteCacheMap.size >= 6) {
       this.sakuraSpriteCacheMap.clear();
     }
-    this.sakuraSpriteCacheKey = key;
     this.floatingFlowerSprites = [];
     this.sunkenFlowerSprites = [];
     this.floatingPetalSprites = [];
@@ -9492,7 +9378,7 @@ export class KoiPondRenderer {
     worldW: number,
     worldH: number,
     time: number,
-    isLight: boolean,
+    _isLight: boolean,
     style: KoiArtStyle
   ): void {
     if ((style as KoiArtStyle) === "sumie") return;
@@ -9578,8 +9464,6 @@ export class KoiPondRenderer {
     const key = `${cw}x${ch}:${isLight ? "day" : "night"}:canopy-shadow-v12`;
     const cached = this.canopyShadowCache.get(key);
     if (cached) {
-      this.canopyShadowCanvas = cached;
-      this.canopyShadowKey = key;
       return cached;
     }
     if (this.canopyShadowCache.size >= 4) {
@@ -9590,8 +9474,6 @@ export class KoiPondRenderer {
     canvas.width = cw;
     canvas.height = ch;
     this.canopyShadowCache.set(key, canvas);
-    this.canopyShadowCanvas = canvas;
-    this.canopyShadowKey = key;
 
     const cCtx = canvas.getContext("2d");
     if (!cCtx) return canvas;
@@ -10060,8 +9942,8 @@ export class KoiPondRenderer {
     world: PondWorld,
     worldW: number,
     worldH: number,
-    time: number,
-    isLight: boolean,
+    _time: number,
+    _isLight: boolean,
     style: KoiArtStyle
   ): void {
     if (false) return;
@@ -10163,7 +10045,7 @@ export class KoiPondRenderer {
    */
   private paintWaterCausticsAndWaves(
     ctx: CanvasRenderingContext2D,
-    world: PondWorld,
+    _world: PondWorld,
     worldW: number,
     worldH: number,
     viewW: number,
@@ -10179,8 +10061,6 @@ export class KoiPondRenderer {
     const h = Math.max(64, Math.round(worldH));
     const unit = koiClamp(Math.min(worldW, worldH) / 860, 0.48, 1.22);
     const invRectScale = 1.0 / Math.max(0.25, rect.scale);
-
-    const largeMaples = this.getLargeMapleLeafSpecs(worldW, worldH, unit, time);
 
     const easeDisp = koiSmoothstep(0, 1, this.flashlightDispersal);
     const darkFlashStrength = 1.0 - easeDisp;
@@ -10347,7 +10227,7 @@ export class KoiPondRenderer {
     worldW: number,
     worldH: number,
     time: number,
-    isLight: boolean,
+    _isLight: boolean,
     style: KoiArtStyle
   ): void {
     if (false) return;
@@ -10513,8 +10393,8 @@ export class KoiPondRenderer {
       rot: number,
       shadowOffset: number,
       alpha = 0.95,
-      foregroundBlur = 0,
-      isHankoAccent = false
+      _foregroundBlur = 0,
+      _isHankoAccent = false
     ) => {
       const lobes = [
         { ang: 0.0, len: 1.0, w: 0.23 },
@@ -10644,7 +10524,6 @@ export class KoiPondRenderer {
   ): void {
     if ((style as KoiArtStyle) === "sumie") return;
 
-    const unit = koiClamp(Math.min(worldW, worldH) / 860, 0.48, 1.22);
     ctx.save();
 
     const solar = this.getSolarLightingState();
@@ -10733,53 +10612,6 @@ export class KoiPondRenderer {
    * and faint warm golden reflections on nearby submerged stones, passing KOIs, drifting maples,
    * floating sakura blossoms/petals, and lily pads.
    */
-
-  /**
-   * Startles any daytime dragonflies within `reach` of `(x, y)` so they immediately dart away
-   * to a distant waypoint across the pond.
-   */
-  private startleDragonfliesNear(
-    x: number,
-    y: number,
-    reach: number,
-    worldW: number,
-    worldH: number,
-    unit: number
-  ): void {
-    const dfFactor = this.getDaytimeDragonflyFactor();
-    if (dfFactor <= 0.01) return;
-
-    for (let i = 0; i < this.dragonflyStates.length; i++) {
-      const df = this.dragonflyStates[i];
-      if (!df.initialized) continue;
-      const dx = df.x - x;
-      const dy = df.y - y;
-      const dist = Math.hypot(dx, dy);
-      if (dist < reach && df.mode !== "darting") {
-        df.mode = "darting";
-        df.modeTimer = 0.85 + (i % 3) * 0.28;
-        const escapeAng =
-          dist > 1.0
-            ? Math.atan2(dy, dx) + (Math.sin(i * 2.3 + df.wingPhase) * 0.55)
-            : i * 1.25;
-        const jumpDist = (260 + (i % 3) * 85) * unit;
-        df.targetX = koiClamp(
-          df.x + Math.cos(escapeAng) * jumpDist,
-          75 * unit,
-          worldW - 75 * unit
-        );
-        df.targetY = koiClamp(
-          df.y + Math.sin(escapeAng) * jumpDist,
-          75 * unit,
-          worldH - 75 * unit
-        );
-        const spd = (390 + (i % 3) * 45) * unit;
-        df.vx = Math.cos(escapeAng) * spd;
-        df.vy = Math.sin(escapeAng) * spd;
-        df.heading = escapeAng;
-      }
-    }
-  }
 
   /**
    * Updates and paints 5 daytime dragonflies (*Tonbo* — 3 *Akiakane* vermilion darters and
@@ -10999,7 +10831,7 @@ export class KoiPondRenderer {
     worldW: number,
     worldH: number,
     time: number,
-    isLight: boolean,
+    _isLight: boolean,
     style: KoiArtStyle,
     skipPhysics: boolean
   ): void {
@@ -11690,7 +11522,7 @@ export class KoiPondRenderer {
     worldW: number,
     worldH: number,
     time: number,
-    isLight: boolean,
+    _isLight: boolean,
     style: KoiArtStyle
   ): void {
     if ((style as KoiArtStyle) === "sumie") return;

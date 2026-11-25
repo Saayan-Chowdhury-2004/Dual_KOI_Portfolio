@@ -1,8 +1,6 @@
 export { KoiPondEngine } from "./engine";
 export {
   BrutalistPortfolioUI,
-  PortfolioColumns,
-  TerminalPortfolioUI,
   computeDynamicAgeBreakdown,
   type DynamicAgeBreakdown,
   type InteractiveElementBounds,
@@ -32,3 +30,6 @@ export {
   traceCaudalFinPath,
   strokeCaudalFinRays,
 } from "./caudalFin";
+
+export { GalleryScrollUI } from "./galleryScroll";
+export { GALLERY_SCROLL_ITEMS, type GalleryScrollItem } from "./galleryData";

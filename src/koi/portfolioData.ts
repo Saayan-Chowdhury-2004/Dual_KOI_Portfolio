@@ -304,8 +304,8 @@ export const PROJECT_TOPICS: readonly ProjectTopicEntry[] = [
     id: "flying-eye",
     index: "04",
     heading: "Flying Eye — Drone-Based Intelligent ET Sensing & Irrigation System",
-    badge: "SIH 2024 RUNNER-UP",
-    subtitle: "Smart India Hackathon 2024 — Grand Finale Runner-up",
+    badge: "SIH 2024 WINNER",
+    subtitle: "Smart India Hackathon 2024 — Hardware Edition Grand Finale Winner",
     pipeline:
       "Multi-Sensor Drone Imagery -> NDVI & Penman-Monteith Modeling -> Google Earth Engine + GDAL/Rasterio",
     techStack: [
@@ -317,7 +317,7 @@ export const PROJECT_TOPICS: readonly ProjectTopicEntry[] = [
       "Drone Sensing",
     ],
     bullets: [
-      "Advanced to the Grand Finale of Smart India Hackathon 2024 and placed Runner-up.",
+      "Won the Grand Finale of Smart India Hackathon 2024 (Hardware Edition) with Team Flying Eye (1571).",
       "Designed an AET estimation workflow (NDVI, Penman-Monteith, crop-coefficient modeling) using Google Earth Engine, Rasterio, and GDAL, integrating multi-sensor drone data for field-level monitoring.",
     ],
   },

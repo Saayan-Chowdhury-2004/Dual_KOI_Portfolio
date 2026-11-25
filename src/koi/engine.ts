@@ -10,13 +10,14 @@ import {
 import { clamp } from "../math";
 import type { SharedPortfolioState } from "../sharedState";
 import { BrutalistPortfolioUI } from "./portfolioColumns";
+import { GalleryScrollUI } from "./galleryScroll";
 import {
   KoiPondRenderer,
   type KoiArtStyle,
   type KoiArtStyleMeta,
 } from "./koiRenderer";
 import { DEFAULT_KOI_CONFIG, PondWorld } from "./pondWorld";
-import { bakeMizuhikiCoinDataUrl, bakeMizuhikiPortraitCoinDataUrl, MizuhikiCoinChain, type MizuhikiCoinVariant } from "./mizuhikiCoins";
+import { bakeMizuhikiCoinDataUrl, bakeMizuhikiPortraitCoinDataUrl, bakeMizuhikiScrollCoinDataUrl, MizuhikiCoinChain, type MizuhikiCoinVariant } from "./mizuhikiCoins";
 import type { KoiPondConfig, KoiSpec } from "./koiTypes";
 
 const STEP = 1 / 60;
@@ -33,26 +34,29 @@ export class KoiPondEngine {
   private world: PondWorld;
   private renderer: KoiPondRenderer;
   private portfolioUI: BrutalistPortfolioUI;
+  private galleryUI: GalleryScrollUI;
   private controlsEl: HTMLElement;
   private toggleBtn!: HTMLButtonElement;
-  private toggleIconEl!: HTMLImageElement;
   private toggleSunIconEl!: HTMLImageElement;
   private toggleMoonIconEl!: HTMLImageElement;
   private profileIconEl!: HTMLImageElement;
+  private scrollIconEl!: HTMLImageElement;
   private githubIconEl!: HTMLImageElement;
   private linkedinIconEl!: HTMLImageElement;
   private flashlightIconEl!: HTMLImageElement;
   private flashlightOffIconEl!: HTMLImageElement;
-  private coinUris: Record<MizuhikiCoinVariant, Partial<Record<"sun" | "moon" | "oni" | "github" | "linkedin" | "flash" | "flashOff", string>>> = {
+  private coinUris: Record<MizuhikiCoinVariant, Partial<Record<"sun" | "moon" | "oni" | "scroll" | "github" | "linkedin" | "flash" | "flashOff", string>>> = {
     brass: {},
     "sumie-day": {},
     "sumie-night": {},
   };
   private mizuhikiChain: MizuhikiCoinChain | null = null;
   private profileBtn!: HTMLButtonElement;
+  private scrollBtn!: HTMLButtonElement;
   private flashlightBtn!: HTMLButtonElement;
 
   private profileOpen = false;
+  private galleryOpen = false;
   private manualThemeOverride: boolean | null = null;
   private themeToggleAnchorLight: boolean | null = null;
   private simulatedSystemHours: number | null = null;
@@ -60,6 +64,7 @@ export class KoiPondEngine {
 
   private lastControlsLightMode: boolean | null = null;
   private lastControlsOpen: boolean | null = null;
+  private lastControlsGalleryOpen: boolean | null = null;
   private lastControlsStyle: KoiArtStyle | null = null;
   private lastControlsFlashlight: boolean | null = null;
 
@@ -133,6 +138,18 @@ export class KoiPondEngine {
       this.emitStateChange();
     };
 
+    this.galleryUI = new GalleryScrollUI(
+      this.canvas.parentElement ?? document.body,
+      {
+        onRequestClose: () => {
+          this.setGalleryOpen(false);
+        },
+        onStateChange: () => {
+          this.emitStateChange();
+        },
+      }
+    );
+
     this.controlsEl = this.createControls();
     this.updateControlsUI();
 
@@ -148,6 +165,7 @@ export class KoiPondEngine {
     window.addEventListener("pointermove", this.onPointerMove, { passive: true });
     window.addEventListener("pointerdown", this.onPointerDown, { passive: true });
     window.addEventListener("click", this.onWindowClick);
+    window.addEventListener("keydown", this.onWindowKeyDown);
 
     document.documentElement.addEventListener("pointerleave", this.onPointerLeave);
     document.addEventListener("mouseleave", this.onPointerLeave);
@@ -214,7 +232,7 @@ export class KoiPondEngine {
   }
 
   public getColumnsUvBounds(): [number, number, number, number] | null {
-    const b = this.portfolioUI.getColumnsViewportBounds();
+    const b = this.galleryUI.getViewportBounds() ?? this.portfolioUI.getColumnsViewportBounds();
     if (!b || this.viewW < 1 || this.viewH < 1) return null;
     const uMin = clamp(b.left / this.viewW, 0, 1);
     const uMax = clamp(b.right / this.viewW, 0, 1);
@@ -230,6 +248,10 @@ export class KoiPondEngine {
       isPortfolioOpen: this.profileOpen,
       expandedColumnIndex: this.portfolioUI.getExpandedColumn(),
       activeProjectTopic: this.portfolioUI.getActiveProjectTopic(),
+      isGalleryOpen: this.galleryOpen,
+      galleryScrollTop: this.galleryUI.getScrollTop(),
+      activeGalleryItemIndex: this.galleryUI.getActiveItemIndex(),
+      activeGallerySlideIndex: this.galleryUI.getActiveSlideIndex(),
       isFlashlightEnabled: this.renderer.isFlashlightEnabled,
       menuBlurPx: this.renderer.getMenuBlurPx(),
       timeOfDayHours: this.renderer.getTimeOfDayHours(),
@@ -265,6 +287,13 @@ export class KoiPondEngine {
         state.isPortfolioOpen,
         state.expandedColumnIndex,
         state.activeProjectTopic
+      );
+      this.galleryOpen = Boolean(state.isGalleryOpen);
+      this.galleryUI.syncState(
+        this.galleryOpen,
+        state.galleryScrollTop,
+        state.activeGalleryItemIndex,
+        state.activeGallerySlideIndex
       );
       this.updateControlsUI();
       this.syncPortfolioUI(STEP);
@@ -302,7 +331,12 @@ export class KoiPondEngine {
     this.portfolioUI.syncLayoutFrom(other.portfolioUI);
     this.portfolioUI.syncFlipProgress(openProg);
     this.renderer.setRectProgress(openProg);
-    this.renderer.setActiveColumnRects(other.portfolioUI.getColumnScreenRects());
+    this.galleryOpen = other.galleryOpen;
+    this.galleryUI.syncVisualStateFrom(other.galleryUI);
+    this.renderer.setActiveColumnRects([
+      ...other.portfolioUI.getColumnScreenRects(),
+      ...other.galleryUI.getScreenRects(),
+    ]);
     this.updateControlsUI();
   }
 
@@ -355,6 +389,7 @@ export class KoiPondEngine {
     cancelAnimationFrame(this.raf);
     this.renderer.destroy();
     this.portfolioUI.destroy();
+    this.galleryUI.destroy();
     this.mizuhikiChain?.destroy();
     this.mizuhikiChain = null;
     this.controlsEl.remove();
@@ -364,7 +399,8 @@ export class KoiPondEngine {
     window.removeEventListener("pointermove", this.onPointerMove);
     window.removeEventListener("pointerdown", this.onPointerDown);
     window.removeEventListener("click", this.onWindowClick);
-    document.documentElement.addEventListener("pointerleave", this.onPointerLeave);
+    window.removeEventListener("keydown", this.onWindowKeyDown);
+    document.documentElement.removeEventListener("pointerleave", this.onPointerLeave);
     document.removeEventListener("mouseleave", this.onPointerLeave);
     window.removeEventListener("mouseout", this.onWindowMouseOut);
     window.removeEventListener("blur", this.onPointerLeave);
@@ -603,7 +639,6 @@ export class KoiPondEngine {
     toggleFlipper.appendChild(sunFace);
     toggleFlipper.appendChild(moonFace);
     toggleBtn.appendChild(toggleFlipper);
-    const toggleIcon = sunIcon;
 
     toggleBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -665,6 +700,11 @@ export class KoiPondEngine {
 
       this.profileOpen = !this.profileOpen;
       if (this.profileOpen) {
+        if (this.galleryOpen) {
+          this.galleryOpen = false;
+          this.galleryUI.setOpen(false, true);
+        }
+        this.portfolioUI.resetExpandedState();
         this.renderer.setPortraitPhotoRevealed(false, true);
         // Pond reaction at t=0 on open: convert button position to pond-local coordinates
         // the exact same way toLocal() does (via getActivePondRect)
@@ -681,6 +721,45 @@ export class KoiPondEngine {
       this.renderFrame();
       this.schedule();
       this.emitStateChange();
+    });
+
+    // 2b. 秘術 Archive Scroll Toggle Button (Below Profile Coin)
+    const scrollBtn = document.createElement("button");
+    scrollBtn.type = "button";
+    scrollBtn.className = "ms-ctrl-btn";
+    scrollBtn.setAttribute("aria-label", "Toggle archive scroll gallery");
+    scrollBtn.setAttribute("aria-expanded", "false");
+    scrollBtn.title = "秘術 Archive Scroll";
+
+    const scrollIcon = document.createElement("img");
+    scrollIcon.className = "ms-ctrl-icon";
+    scrollIcon.alt = "";
+    scrollIcon.draggable = false;
+    scrollBtn.appendChild(scrollIcon);
+
+    scrollBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const btnRect = scrollBtn.getBoundingClientRect();
+      const canvasRect = this.canvas.getBoundingClientRect();
+      const btnX =
+        btnRect.width > 0
+          ? btnRect.left + btnRect.width * 0.5 - canvasRect.left
+          : Math.max(40, this.viewW - 46);
+      const btnY =
+        btnRect.height > 0
+          ? btnRect.top + btnRect.height * 0.5 - canvasRect.top
+          : 205;
+
+      const nextOpen = !this.galleryOpen;
+      if (nextOpen) {
+        const pondRect = this.renderer.getActivePondRect(this.viewW, this.viewH);
+        const localX = (btnX - pondRect.x) / pondRect.scale;
+        const localY = (btnY - pondRect.y) / pondRect.scale;
+        this.world.splash(localX, localY);
+        this.renderer.triggerPondClick(localX, localY, this.viewW, this.viewH);
+      }
+      this.mizuhikiChain?.nudgeByElement(scrollBtn, nextOpen ? 1 : -1);
+      this.setGalleryOpen(nextOpen);
     });
 
     // 3. Lamp / Flashlight Toggle Button (Shown in Night Mode)
@@ -766,11 +845,12 @@ export class KoiPondEngine {
     });
 
     this.toggleBtn = toggleBtn;
-    this.toggleIconEl = toggleIcon;
     this.toggleSunIconEl = sunIcon;
     this.toggleMoonIconEl = moonIcon;
     this.profileBtn = profileBtn;
     this.profileIconEl = profileIcon;
+    this.scrollBtn = scrollBtn;
+    this.scrollIconEl = scrollIcon;
     this.githubIconEl = githubIcon;
     this.linkedinIconEl = linkedinIcon;
     this.flashlightBtn = flashlightBtn;
@@ -786,7 +866,9 @@ export class KoiPondEngine {
       ["flash", ICON_FLASHLIGHT_URI, false],
       ["flashOff", ICON_FLASHLIGHT_OFF_URI, false],
     ];
-    for (const variant of ["brass", "sumie-day", "sumie-night"] as const) {
+    const variants: readonly MizuhikiCoinVariant[] =
+      this.renderer.getArtStyle() === "sumie" ? ["sumie-day", "sumie-night"] : ["brass"];
+    for (const variant of variants) {
       for (const [key, srcUri, isOni] of iconEntries) {
         bakeMizuhikiCoinDataUrl(srcUri, variant, isOni, (bakedUri) => {
           this.coinUris[variant][key] = bakedUri;
@@ -798,11 +880,17 @@ export class KoiPondEngine {
         this.coinUris[variant].oni = bakedUri;
         this.applyCoinArtForCurrentState();
       });
+      // Bake sculpted 秘術 scroll coin medallion for Mokkotsu (brass) and Sumi-e (ink-black / silver patina)
+      bakeMizuhikiScrollCoinDataUrl(variant, (bakedUri) => {
+        this.coinUris[variant].scroll = bakedUri;
+        this.applyCoinArtForCurrentState();
+      });
     }
 
-    // Order top-to-bottom: Sun/Moon, Oni, GitHub, LinkedIn, Flashlight (bottommost)
+    // Order top-to-bottom: Sun/Moon, Profile, 秘術 Scroll, GitHub, LinkedIn, Flashlight (bottommost)
     container.appendChild(toggleBtn);
     container.appendChild(profileBtn);
+    container.appendChild(scrollBtn);
     container.appendChild(githubLink);
     container.appendChild(linkedinLink);
     container.appendChild(flashlightBtn);
@@ -810,6 +898,7 @@ export class KoiPondEngine {
     this.mizuhikiChain = new MizuhikiCoinChain(container, [
       toggleBtn,
       profileBtn,
+      scrollBtn,
       githubLink,
       linkedinLink,
       flashlightBtn,
@@ -830,6 +919,7 @@ export class KoiPondEngine {
     if (map.sun && this.toggleSunIconEl.src !== map.sun) this.toggleSunIconEl.src = map.sun;
     if (map.moon && this.toggleMoonIconEl.src !== map.moon) this.toggleMoonIconEl.src = map.moon;
     if (map.oni && this.profileIconEl.src !== map.oni) this.profileIconEl.src = map.oni;
+    if (map.scroll && this.scrollIconEl.src !== map.scroll) this.scrollIconEl.src = map.scroll;
     if (map.github && this.githubIconEl.src !== map.github) this.githubIconEl.src = map.github;
     if (map.linkedin && this.linkedinIconEl.src !== map.linkedin) this.linkedinIconEl.src = map.linkedin;
     // Swapped: front (ON) shows flashOff art, back (OFF) shows flash art
@@ -869,11 +959,19 @@ export class KoiPondEngine {
       this.profileBtn.classList.toggle("ms-ctrl-btn--active", isOpen);
     }
 
+    const isGalleryOpen = this.galleryOpen;
+    if (this.lastControlsGalleryOpen !== isGalleryOpen) {
+      this.lastControlsGalleryOpen = isGalleryOpen;
+      this.scrollBtn.setAttribute("aria-expanded", isGalleryOpen ? "true" : "false");
+      this.scrollBtn.classList.toggle("ms-ctrl-btn--active", isGalleryOpen);
+    }
+
     const styleChanged = this.lastControlsStyle !== styleMeta.id;
     if (styleChanged) {
       this.lastControlsStyle = styleMeta.id;
       this.controlsEl.setAttribute("data-art-style", styleMeta.id);
       this.portfolioUI.setArtStyle(styleMeta.id);
+      this.galleryUI.setArtStyle(styleMeta.id);
       this.mizuhikiChain?.setArtStyle(styleMeta.id);
     }
 
@@ -915,7 +1013,20 @@ export class KoiPondEngine {
     const openProgress = this.portfolioUI.getOpenProgress();
     this.renderer.setRectProgress(openProgress);
     this.renderer.setProfileTargetOpen(this.profileOpen);
-    this.renderer.setActiveColumnRects(this.portfolioUI.getColumnScreenRects());
+    this.galleryUI.setQualityAndMotion(this.qualityLevel, this.reducedMotion.matches);
+    this.galleryUI.update(
+      this.galleryOpen,
+      this.renderer.isLightMode,
+      this.viewW,
+      this.viewH,
+      this.world.config.cellWidth,
+      this.world.config.cellHeight,
+      dt
+    );
+    this.renderer.setActiveColumnRects([
+      ...this.portfolioUI.getColumnScreenRects(),
+      ...this.galleryUI.getScreenRects(),
+    ]);
   }
 
   private getEffectiveDpr(): number {
@@ -958,7 +1069,7 @@ export class KoiPondEngine {
 
   private schedule() {
     cancelAnimationFrame(this.raf);
-    const needsAnim = this.renderer.isTransitioning || this.portfolioUI.isAnimating;
+    const needsAnim = this.renderer.isTransitioning || this.portfolioUI.isAnimating || this.galleryUI.isAnimating;
     if (
       this.disposed ||
       !this.visible ||
@@ -974,7 +1085,10 @@ export class KoiPondEngine {
   public renderFrame() {
     const ctx = this.getCtx();
     if (!ctx || this.viewW < 1 || this.viewH < 1) return;
-    this.renderer.setActiveColumnRects(this.portfolioUI.getColumnScreenRects());
+    this.renderer.setActiveColumnRects([
+      ...this.portfolioUI.getColumnScreenRects(),
+      ...this.galleryUI.getScreenRects(),
+    ]);
     this.renderer.render(
       ctx,
       this.viewW,
@@ -1002,11 +1116,16 @@ export class KoiPondEngine {
   private syncFlashlightDomVeil(): void {
     const fl = this.renderer.getFlashlightVeilMetrics(this.viewW, this.viewH);
     const portfolioRoot = this.portfolioUI.getRootElement();
+    const galleryRoot = this.galleryUI.getRootElement();
 
     if (!fl.active) {
       if (portfolioRoot.style.maskImage || portfolioRoot.style.webkitMaskImage) {
         portfolioRoot.style.webkitMaskImage = "";
         portfolioRoot.style.maskImage = "";
+      }
+      if (galleryRoot.style.maskImage || galleryRoot.style.webkitMaskImage) {
+        galleryRoot.style.webkitMaskImage = "";
+        galleryRoot.style.maskImage = "";
       }
       if (this.controlsEl.style.maskImage || this.controlsEl.style.webkitMaskImage) {
         this.controlsEl.style.webkitMaskImage = "";
@@ -1029,6 +1148,10 @@ export class KoiPondEngine {
     const stageMask = `radial-gradient(circle ${rad}px at ${stageLocalX.toFixed(1)}px ${stageLocalY.toFixed(1)}px, rgba(0,0,0,1) 0%, rgba(0,0,0,${s22}) 22%, rgba(0,0,0,${s45}) 45%, rgba(0,0,0,${s68}) 68%, rgba(0,0,0,${s86}) 86%, rgba(0,0,0,${sOut}) 100%)`;
     portfolioRoot.style.webkitMaskImage = stageMask;
     portfolioRoot.style.maskImage = stageMask;
+
+    const galleryMask = `radial-gradient(circle ${rad}px at ${fl.x.toFixed(1)}px ${fl.y.toFixed(1)}px, rgba(0,0,0,1) 0%, rgba(0,0,0,${s22}) 22%, rgba(0,0,0,${s45}) 45%, rgba(0,0,0,${s68}) 68%, rgba(0,0,0,${s86}) 86%, rgba(0,0,0,${sOut}) 100%)`;
+    galleryRoot.style.webkitMaskImage = galleryMask;
+    galleryRoot.style.maskImage = galleryMask;
 
     const ctrlOriginX = this.controlsEl.offsetWidth > 0 ? this.controlsEl.offsetLeft : this.viewW - 163;
     const ctrlOriginY = this.controlsEl.offsetWidth > 0 ? this.controlsEl.offsetTop : 0;
@@ -1083,7 +1206,7 @@ export class KoiPondEngine {
       this.syncTimeWithSystemClock(now, false);
     }
 
-    if (this.profileOpen || this.portfolioUI.isAnimating) {
+    if (this.profileOpen || this.portfolioUI.isAnimating || this.galleryOpen || this.galleryUI.isAnimating) {
       this.syncPortfolioUI(dt);
     }
 
@@ -1103,7 +1226,8 @@ export class KoiPondEngine {
       this.qualityLevel >= MAX_QUALITY_LEVEL &&
       (this.renderTick & 1) === 1 &&
       !this.renderer.isTransitioning &&
-      !this.portfolioUI.isAnimating;
+      !this.portfolioUI.isAnimating &&
+      !this.galleryUI.isAnimating;
     if (!skipRender) {
       this.renderFrame();
       if (this.isActiveLayer && this.onAfterActiveRender) {
@@ -1124,7 +1248,7 @@ export class KoiPondEngine {
       this.govern(dt, mainCostMs, now);
     }
 
-    const needsAnim = this.renderer.isTransitioning || this.portfolioUI.isAnimating;
+    const needsAnim = this.renderer.isTransitioning || this.portfolioUI.isAnimating || this.galleryUI.isAnimating;
     if (!this.paused && (!this.reducedMotion.matches || needsAnim)) {
       this.raf = requestAnimationFrame(this.frame);
     }
@@ -1152,7 +1276,7 @@ export class KoiPondEngine {
     const targetEl = e.target instanceof Element ? e.target : null;
     const overUI = !!(
       targetEl &&
-      (targetEl.closest(".ms-floating-controls") || targetEl.closest(".bp-col"))
+      (targetEl.closest(".ms-floating-controls") || targetEl.closest(".bp-col") || targetEl.closest(".gs-scroll-panel") || targetEl.closest(".gs-lightbox"))
     );
 
     const rect = this.canvas.getBoundingClientRect();
@@ -1197,7 +1321,7 @@ export class KoiPondEngine {
     const targetEl = e.target instanceof Element ? e.target : null;
     const overUI = !!(
       targetEl &&
-      (targetEl.closest(".ms-floating-controls") || targetEl.closest(".bp-col"))
+      (targetEl.closest(".ms-floating-controls") || targetEl.closest(".bp-col") || targetEl.closest(".gs-scroll-panel") || targetEl.closest(".gs-lightbox"))
     );
     const overPortrait = !overUI && this.isPointInPortraitFrame(rawX, rawY);
     this.canvas.style.cursor = overPortrait ? "pointer" : "";
@@ -1218,9 +1342,15 @@ export class KoiPondEngine {
     const targetEl = e.target instanceof Element ? e.target : null;
     if (
       targetEl &&
-      (targetEl.closest(".ms-floating-controls") || targetEl.closest(".bp-col"))
+      (targetEl.closest(".ms-floating-controls") ||
+        targetEl.closest(".bp-col") ||
+        targetEl.closest(".gs-scroll-panel") ||
+        targetEl.closest(".gs-lightbox"))
     ) {
       return;
+    }
+    if (this.galleryOpen) {
+      this.setGalleryOpen(false);
     }
     const rect = this.canvas.getBoundingClientRect();
     const rawX = e.clientX - rect.left;
@@ -1239,6 +1369,42 @@ export class KoiPondEngine {
     this.renderer.triggerPondClick(x, y, effW, effH);
     if (!this.reducedMotion.matches) this.world.splash(x, y);
     this.schedule();
+  };
+
+  private setGalleryOpen(open: boolean): void {
+    if (this.galleryOpen === open) return;
+    this.galleryOpen = open;
+    if (open && this.profileOpen) {
+      this.profileOpen = false;
+      this.portfolioUI.resetExpandedState();
+      this.renderer.setProfileTargetOpen(false);
+    }
+    this.galleryUI.setOpen(open, true);
+    this.updateControlsUI();
+    this.syncPortfolioUI(0);
+    this.renderFrame();
+    this.schedule();
+    this.emitStateChange();
+  }
+
+  private onWindowKeyDown = (e: KeyboardEvent) => {
+    if (!this.isActiveLayer || !this.galleryOpen) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      if (this.galleryUI.isLightboxOpen()) {
+        this.galleryUI.closeLightbox();
+      } else {
+        this.setGalleryOpen(false);
+      }
+    } else if (this.galleryUI.isLightboxOpen()) {
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        this.galleryUI.stepLightbox(-1);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        this.galleryUI.stepLightbox(1);
+      }
+    }
   };
 
   private onPointerLeave = () => {

@@ -9,6 +9,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src", "demo.ts"],
-  "exclude": ["src/react.tsx"]
+  "include": ["src", "demo.ts"]
 }

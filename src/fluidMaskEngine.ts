@@ -37,7 +37,6 @@ const DRAG_PIXEL_THRESHOLD = 10;
 
 export class FluidMaskEngine {
   private gl: WebGLRenderingContext | WebGL2RenderingContext | null = null;
-  private isWebGL2 = false;
   private halfFloatTexType = 0;
   private supportLinearFiltering = false;
   private rgbaFormat: { internalFormat: number; format: number } = { internalFormat: 0, format: 0 };
@@ -110,9 +109,23 @@ export class FluidMaskEngine {
       this.cssMaskImageData = this.cssMaskCtx.createImageData(this.maskW, this.maskH);
     }
 
+    this.overlayCanvas.addEventListener("webglcontextlost", this.onContextLost);
+    this.overlayCanvas.addEventListener("webglcontextrestored", this.onContextRestored);
     this.initWebGL();
     this.resize();
   }
+
+  private onContextLost = (e: Event): void => {
+    e.preventDefault();
+    this.gl = null;
+    this.resetToIdle();
+  };
+
+  private onContextRestored = (): void => {
+    if (this.disposed) return;
+    this.initWebGL();
+    this.resize();
+  };
 
   public getPhase(): FluidMaskPhase {
     return this.phase;
@@ -585,6 +598,11 @@ export class FluidMaskEngine {
       this.phase === "retracting" && anyVisiblePixels > 0 ? 0.001 : 0
     );
 
+    if (anyVisiblePixels === 0) {
+      this.clearMaskStyle(this.getTopLayerEl());
+      return;
+    }
+
     if (this.cssMaskCtx && this.cssMaskImageData) {
       const data = this.cssMaskImageData.data;
       const mw = this.maskW;
@@ -760,7 +778,6 @@ export class FluidMaskEngine {
     if (!gl) return;
 
     this.gl = gl;
-    this.isWebGL2 = isWebGL2;
 
     let halfFloatTexType: number = gl.UNSIGNED_BYTE;
     let supportLinearFiltering = false;
@@ -1445,6 +1462,7 @@ export class FluidMaskEngine {
       );
     }
 
+    if (this.divergenceFBO) this.deleteFBO(this.divergenceFBO);
     this.divergenceFBO = this.createFBO(
       simRes.width,
       simRes.height,
@@ -1453,6 +1471,7 @@ export class FluidMaskEngine {
       texType,
       gl.NEAREST
     );
+    if (this.curlFBO) this.deleteFBO(this.curlFBO);
     this.curlFBO = this.createFBO(
       simRes.width,
       simRes.height,
@@ -1461,15 +1480,41 @@ export class FluidMaskEngine {
       texType,
       gl.NEAREST
     );
-    this.pressureFBO = this.createDoubleFBO(
-      simRes.width,
-      simRes.height,
-      r.internalFormat,
-      r.format,
-      texType,
-      gl.NEAREST
-    );
+    if (this.pressureFBO) {
+      this.pressureFBO = this.resizeDoubleFBO(
+        this.pressureFBO,
+        simRes.width,
+        simRes.height,
+        r.internalFormat,
+        r.format,
+        texType,
+        gl.NEAREST
+      );
+    } else {
+      this.pressureFBO = this.createDoubleFBO(
+        simRes.width,
+        simRes.height,
+        r.internalFormat,
+        r.format,
+        texType,
+        gl.NEAREST
+      );
+    }
+    if (this.coverageFBO) this.deleteFBO(this.coverageFBO);
     this.coverageFBO = this.createFBO(64, 64, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, gl.LINEAR);
+  }
+
+  private deleteFBO(fbo?: FBO): void {
+    const gl = this.gl;
+    if (!gl || !fbo) return;
+    gl.deleteFramebuffer(fbo.fbo);
+    gl.deleteTexture(fbo.texture);
+  }
+
+  private deleteDoubleFBO(dfbo?: DoubleFBO): void {
+    if (!dfbo) return;
+    this.deleteFBO(dfbo.read);
+    this.deleteFBO(dfbo.write);
   }
 
   private createFBO(
@@ -1556,6 +1601,8 @@ export class FluidMaskEngine {
     param: number
   ): DoubleFBO {
     if (target.width === w && target.height === h) return target;
+    this.deleteFBO(target.read);
+    this.deleteFBO(target.write);
     target.read = this.createFBO(w, h, internalFormat, format, type, param);
     target.write = this.createFBO(w, h, internalFormat, format, type, param);
     target.width = w;
@@ -1579,6 +1626,40 @@ export class FluidMaskEngine {
 
   public destroy(): void {
     this.disposed = true;
+    this.overlayCanvas.removeEventListener("webglcontextlost", this.onContextLost);
+    this.overlayCanvas.removeEventListener("webglcontextrestored", this.onContextRestored);
     this.clearMaskStyle(this.getTopLayerEl());
+
+    const gl = this.gl;
+    if (gl) {
+      this.deleteDoubleFBO(this.velocityFBO);
+      this.deleteDoubleFBO(this.dyeFBO);
+      this.deleteDoubleFBO(this.pressureFBO);
+      this.deleteFBO(this.divergenceFBO);
+      this.deleteFBO(this.curlFBO);
+      this.deleteFBO(this.coverageFBO);
+      if (this.bottomCanvasTex) gl.deleteTexture(this.bottomCanvasTex);
+      if (this.topCanvasTex) gl.deleteTexture(this.topCanvasTex);
+      if (this.quadBuffer) gl.deleteBuffer(this.quadBuffer);
+      const progs = [
+        this.clearProg,
+        this.splatProg,
+        this.advectionProg,
+        this.divergenceProg,
+        this.curlProg,
+        this.vorticityProg,
+        this.pressureProg,
+        this.gradSubtractProg,
+        this.coverageProg,
+        this.displayProg,
+      ];
+      for (const p of progs) {
+        if (p?.program) gl.deleteProgram(p.program);
+      }
+    }
+    this.bottomCanvasTex = null;
+    this.topCanvasTex = null;
+    this.quadBuffer = null;
+    this.gl = null;
   }
 }

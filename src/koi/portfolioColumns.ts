@@ -31,7 +31,6 @@ import { clamp, smoothstep } from "../math";
 import {
   COLUMN_TEXT_FADE_SECONDS,
   COLUMN_TEXT_TRANSLATE_Y_PX,
-  CRATER_WIDTH_TILES,
   FLIP_CLOSE_DURATION,
   FLIP_OPEN_DURATION,
   RIM_WIDTH_TILES,
@@ -153,7 +152,6 @@ export class BrutalistPortfolioUI {
   private cachedTopPx = 24;
   private cachedHeightPx = 800;
   private cachedGapPx = 12;
-  private baseColWidth = 100;
   private colLefts: [number, number, number, number] = [0, 0, 0, 0];
   private colWidths: [number, number, number, number] = [100, 100, 100, 100];
 
@@ -413,6 +411,27 @@ export class BrutalistPortfolioUI {
 
   public destroy(): void {
     this.root.remove();
+  }
+
+  public resetExpandedState(): void {
+    this.expandedColIdx = null;
+    this.colWeights = [1, 1, 1, 1];
+    this.startColWeights = [1, 1, 1, 1];
+    this.targetColWeights = [1, 1, 1, 1];
+    this.gapMultipliers = [1, 1, 1];
+    this.startGapMultipliers = [1, 1, 1];
+    this.targetGapMultipliers = [1, 1, 1];
+    this.expandAnimProgress = 1;
+    for (const colEl of this.colElements) {
+      colEl.classList.remove("bp-col--is-expanded", "bp-col--is-shrunk");
+      const cue = colEl.querySelector<HTMLElement>("[data-bp-footer-cue]");
+      if (cue) cue.textContent = "[ UNFOLD SCROLL // 開 ]";
+    }
+    this.root.classList.remove("bp-has-expanded-col");
+    this.domSettled = false;
+    if (this.canvasW > 0 && this.canvasH > 0) {
+      this.updateColumnGeometry();
+    }
   }
 
   public setExpandedColumn(idx: number | null): void {
@@ -692,11 +711,9 @@ export class BrutalistPortfolioUI {
       }
 
       
-      #layer-koi .bp-col.bp-col--is-shrunk {
-        box-shadow:
-          inset 0 0 0 2px rgba(96, 12, 9, 0.88),
-          inset 0 0 0 3px rgba(226, 188, 92, 0.40),
-          0 6px 18px rgba(34, 14, 6, 0.26);
+      #layer-koi .bp-col.bp-col--is-shrunk,
+      #layer-koi .bp-col.bp-col--is-shrunk:hover {
+        box-shadow: 0 6px 18px rgba(34, 14, 6, 0.26);
       }
 
       #layer-koi .bp-shrunk-spine {
@@ -1748,13 +1765,32 @@ export class BrutalistPortfolioUI {
       }
 
       @media (max-width: 820px) {
-
         #layer-koi .bp-col--is-expanded .bp-col-inner {
-          width: 64% !important;
-          max-width: 64% !important;
+          width: 72% !important;
+          max-width: 72% !important;
+          padding: 16px 14px !important;
         }
         #layer-koi .bp-contact-grid {
           grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 600px) {
+        #layer-koi .bp-col:not(.bp-col--is-expanded) .bp-col-inner {
+          padding: 18px 4px 12px 4px;
+        }
+        #layer-koi .bp-col:not(.bp-col--is-expanded) .bp-folio-seal {
+          width: 44px;
+          height: 44px;
+          font-size: 24px;
+        }
+        #layer-koi .bp-col--is-expanded .bp-col-inner {
+          width: 100% !important;
+          max-width: 100% !important;
+          background: linear-gradient(90deg, rgba(243, 234, 219, 0.94) 0%, rgba(243, 234, 219, 0.86) 100%);
+        }
+        #layer-koi .bp-portfolio-root[data-art-style="sumie"] .bp-col--is-expanded .bp-col-inner {
+          background: linear-gradient(90deg, rgba(235, 227, 211, 0.95) 0%, rgba(235, 227, 211, 0.88) 100%);
         }
       }
 
@@ -1942,6 +1978,13 @@ export class BrutalistPortfolioUI {
           inset 0 0 0 4px rgba(246, 240, 228, 0.94),
           inset 0 0 0 5.5px rgba(20, 18, 16, 0.72),
           0 12px 28px rgba(28, 24, 18, 0.28);
+      }
+
+      #layer-koi .bp-portfolio-root[data-art-style="sumie"] .bp-col.bp-col--is-shrunk,
+      #layer-koi .bp-portfolio-root[data-art-style="sumie"] .bp-col.bp-col--is-shrunk:hover,
+      #layer-koi .bp-portfolio-root.bp-theme-light[data-art-style="sumie"] .bp-col.bp-col--is-shrunk,
+      #layer-koi .bp-portfolio-root.bp-theme-light[data-art-style="sumie"] .bp-col.bp-col--is-shrunk:hover {
+        box-shadow: 0 6px 18px rgba(18, 16, 14, 0.26);
       }
 
       #layer-koi .bp-portfolio-root.bp-theme-light[data-art-style="sumie"] .bp-vchar,
@@ -2482,8 +2525,6 @@ export class BrutalistPortfolioUI {
     } = this;
 
     const totalAvailW = Math.max(220, viewportW - leftPx - rightClearance);
-    const defaultColsW = Math.max(120, totalAvailW - gapPx * 3);
-    this.baseColWidth = defaultColsW / 4;
 
     const g0 = gapPx * this.gapMultipliers[0];
     const g1 = gapPx * this.gapMultipliers[1];
@@ -2558,21 +2599,10 @@ export class BrutalistPortfolioUI {
       this.domSettled = false;
     }
 
+    let weightsChanged = false;
     if (!portraitTarget && this.targetOpen && this.expandedColIdx !== null) {
-      this.expandedColIdx = null;
-      this.colWeights = [1, 1, 1, 1];
-      this.startColWeights = [1, 1, 1, 1];
-      this.targetColWeights = [1, 1, 1, 1];
-      this.gapMultipliers = [1, 1, 1];
-      this.startGapMultipliers = [1, 1, 1];
-      this.targetGapMultipliers = [1, 1, 1];
-      this.expandAnimProgress = 1;
-      for (const colEl of this.colElements) {
-        colEl.classList.remove("bp-col--is-expanded", "bp-col--is-shrunk");
-        const cue = colEl.querySelector<HTMLElement>("[data-bp-footer-cue]");
-        if (cue) cue.textContent = "[ UNFOLD SCROLL // 開 ]";
-      }
-      this.root.classList.remove("bp-has-expanded-col");
+      this.resetExpandedState();
+      weightsChanged = true;
     }
 
     if (this.targetOpen !== portraitTarget) {
@@ -2593,7 +2623,6 @@ export class BrutalistPortfolioUI {
       }
     }
 
-    let weightsChanged = false;
     if (this.expandAnimProgress < 1) {
       this.expandAnimProgress = Math.min(
         1,
@@ -3005,5 +3034,3 @@ export class BrutalistPortfolioUI {
     }
   }
 }
-
-export { BrutalistPortfolioUI as PortfolioColumns, BrutalistPortfolioUI as TerminalPortfolioUI };

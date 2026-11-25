@@ -592,7 +592,6 @@ export function bakeSumieForegroundPadSprite(
 
   const img = ctx.createImageData(dim, dim);
   const data = img.data;
-  const invR = 1 / r;
   const cleftHalf = isCompanion ? 0.24 : 0.16;
   const sOffX = (seed * 23.1) % 100;
   const sOffY = (seed * 41.7) % 100;

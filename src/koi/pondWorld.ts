@@ -6,9 +6,7 @@
  */
 
 import {
-  attractKoiToFood,
   createKoiFish,
-  pondFishSplash,
   rescalePondFish,
   seedPondFish,
   stepPondFish,
@@ -39,7 +37,6 @@ export const DEFAULT_KOI_CONFIG: KoiPondConfig = {
 
 const MAX_KOI_SNAPSHOT = 4;
 const MAX_MINNOW_SNAPSHOT = 512;
-const MAX_FOOD_PELLETS = 24;
 
 export class PondWorld {
   width = 0;
@@ -48,7 +45,6 @@ export class PondWorld {
   koi: KoiFish[] = [];
   fish: PondFish[] = [];
   food: PondFoodPellet[] = [];
-  private nextFoodId = 1;
 
   readonly pond = new PondEnvironment();
   readonly pointer: PondPointerState = {

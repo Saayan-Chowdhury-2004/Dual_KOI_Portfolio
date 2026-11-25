@@ -9,7 +9,7 @@ const KOI_FLUID_STYLE_ID = "koi-fluid-ink-style-styles";
 // - Mokkotsu (Default) KOI Sim Contrast: 1.20
 // - Sumi-e (Ink) KOI Sim Contrast: 1.00
 // - Btn Corner Rounding: 16%
-// - Btn Size: 59px
+// - Btn Size: 79px
 // - Btn Shadow Size: 14px
 // - Btn Shadow Opacity: 0.67
 const DEFAULT_MOKKOTSU_CONTRAST = 1.2;
@@ -18,7 +18,6 @@ const DEFAULT_BTN_RADIUS_PCT = 16;
 const DEFAULT_BTN_SIZE_PX = 79;
 const DEFAULT_BTN_SHADOW_SIZE_PX = 14;
 const DEFAULT_BTN_SHADOW_OPACITY = 0.67;
-const DEFAULT_IDLE_SCROLL_WIDTH_PX = 445;
 
 export class KoiFluidApp {
   private stageEl: HTMLElement;
@@ -42,7 +41,6 @@ export class KoiFluidApp {
 
   private activeStyle: PortfolioLayerId = "mokkotsu";
   private menuBlurPx = 8.0;
-  private raf = 0;
   private disposed = false;
 
   constructor(container: HTMLElement = document.body) {
@@ -214,7 +212,7 @@ export class KoiFluidApp {
   }
 
   private handlePortfolioStateChange(state: SharedPortfolioState): void {
-    const nextOpen = Boolean(state.isPortfolioOpen);
+    const nextOpen = Boolean(state.isPortfolioOpen || state.isGalleryOpen);
     if (nextOpen === this.isProfileMenuOpen) return;
     this.isProfileMenuOpen = nextOpen;
 
@@ -264,10 +262,6 @@ export class KoiFluidApp {
     if (this.loaderDismissTimer !== null) {
       window.clearTimeout(this.loaderDismissTimer);
       this.loaderDismissTimer = null;
-    }
-    if (this.idleCurtainOpenTimer !== null) {
-      window.clearTimeout(this.idleCurtainOpenTimer);
-      this.idleCurtainOpenTimer = null;
     }
 
     if (this.idleCurtainEl) return;
@@ -737,6 +731,10 @@ export class KoiFluidApp {
   public destroy(): void {
     this.disposed = true;
     this.clearScrollCueTimers();
+    if (this.loaderDismissTimer !== null) {
+      window.clearTimeout(this.loaderDismissTimer);
+      this.loaderDismissTimer = null;
+    }
     if (this.idleCurtainDismissTimer !== null) {
       window.clearTimeout(this.idleCurtainDismissTimer);
       this.idleCurtainDismissTimer = null;
@@ -745,7 +743,6 @@ export class KoiFluidApp {
       this.idleCurtainEl.remove();
       this.idleCurtainEl = null;
     }
-    cancelAnimationFrame(this.raf);
     window.removeEventListener("pointerdown", this.onPointerDownCapture, { capture: true });
     window.removeEventListener("pointermove", this.onPointerMoveCapture, { capture: true });
     window.removeEventListener("pointerup", this.onPointerUpCapture, { capture: true });
