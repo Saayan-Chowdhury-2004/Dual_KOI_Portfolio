@@ -674,7 +674,7 @@ export function bakeMizuhikiPortraitCoinDataUrl(
 /**
  * Bakes a 2x-retina sculpted 3D cast-metal Japanese coin medallion featuring an
  * embossed hanging scroll silhouette (turned top/bottom rollers with end knobs,
- * hanging cord bow, unfurled scroll body) and crisp recessed/relief 秘術 kanji
+ * hanging cord bow, unfurled scroll body) and crisp recessed/relief 実績 kanji
  * strokes matching the antique brass (Mokkotsu) and ink-black / silver patina
  * (Sumi-e Day/Night) finish of the Profile medallion.
  */
@@ -683,7 +683,7 @@ export function bakeMizuhikiScrollCoinDataUrl(
   onReady: (dataUrl: string) => void
 ): void {
   const renderScrollCoin = (fontReadyTag: string) => {
-    const cacheKey = `scroll-hijutsu-v1|${variant}|${fontReadyTag}`;
+    const cacheKey = `scroll-jisseki-v1|${variant}|${fontReadyTag}`;
     const cached = coinBakeCache.get(cacheKey);
     if (cached) {
       onReady(cached);
@@ -756,7 +756,7 @@ export function bakeMizuhikiScrollCoinDataUrl(
     drawRoller(bodyTop - 1, 35, 9.5);
     drawRoller(bodyBot + 1, 35, 10.5);
 
-    // Recessed patina mask (roller creases + carved 秘術 kanji)
+    // Recessed patina mask (roller creases + carved 実績 kanji)
     const recessCanvas = document.createElement("canvas");
     recessCanvas.width = size;
     recessCanvas.height = size;
@@ -783,12 +783,12 @@ export function bakeMizuhikiScrollCoinDataUrl(
     rctx.lineTo(cx + bodyHalfW - 5.5, bodyBot - 8.5);
     rctx.stroke();
 
-    // Crisp vertical 秘術 characters inside the scroll face
+    // Crisp vertical 実績 characters inside the scroll face
     rctx.textAlign = "center";
     rctx.textBaseline = "middle";
     rctx.font = `700 26px "Noto Serif JP", "Yu Mincho", "Hiragino Mincho ProN", serif`;
-    rctx.fillText("秘", cx, cy - 11.5);
-    rctx.fillText("術", cx, cy + 16.5);
+    rctx.fillText("実", cx, cy - 11.5);
+    rctx.fillText("績", cx, cy + 16.5);
 
     // Specular glint mask along top roller, cord, and bottom roller top edge
     const glintCanvas = document.createElement("canvas");
@@ -965,14 +965,14 @@ export function bakeMizuhikiScrollCoinDataUrl(
     }
     ctx.drawImage(tint(silCanvas, faceGrad), 0, 0);
 
-    // Subtle bottom-right catch-light lip inside engraved 秘術 strokes
+    // Subtle bottom-right catch-light lip inside engraved 実績 strokes
     ctx.drawImage(
       tint(recessCanvas, isBrass ? "rgba(255, 246, 206, 0.48)" : "rgba(255, 252, 244, 0.42)"),
       1.0,
       1.0
     );
 
-    // Deep cast patina engraving for roller grooves & 秘術 characters
+    // Deep cast patina engraving for roller grooves & 実績 characters
     ctx.drawImage(
       tint(recessCanvas, isBrass ? "rgba(42, 22, 4, 0.88)" : "rgba(12, 11, 10, 0.90)"),
       0,

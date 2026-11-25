@@ -13,4 +13,10 @@ export interface SharedPortfolioState {
   menuBlurPx?: number;
   timeOfDayHours?: number;
   manualThemeOverride?: boolean | null;
+  pondZoom?: number;
+  pondPanX?: number;
+  pondPanY?: number;
+  pondTargetZoom?: number;
+  pondTargetPanX?: number;
+  pondTargetPanY?: number;
 }

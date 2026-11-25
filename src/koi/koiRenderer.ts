@@ -297,6 +297,19 @@ export class KoiPondRenderer {
   private flashlightDispersal = 1;
   private lastFlashUpdateAt = 0;
 
+  private cameraZoom = 1.0;
+  private cameraPanX = 0;
+  private cameraPanY = 0;
+  private targetZoom = 1.0;
+  private targetPanX = 0;
+  private targetPanY = 0;
+  private zoomStartZoom = 1.0;
+  private zoomStartPanX = 0;
+  private zoomStartPanY = 0;
+  private zoomAnimStartMs = 0;
+  private zoomAnimActive = false;
+  private readonly zoomAnimDurationMs = 1000;
+
   private redBorderImg: HTMLImageElement | null = null;
   private redBorderLoaded = false;
   private sumieBorderCanvas: HTMLCanvasElement | null = null;
@@ -762,6 +775,7 @@ export class KoiPondRenderer {
     return (
       this.transitioning ||
       this.portraitStyleTransActive ||
+      this.zoomAnimActive ||
       Math.abs(this.flashlightDispersal - targetDisp) > 0.002
     );
   }
@@ -992,7 +1006,167 @@ export class KoiPondRenderer {
     this.activeColumnRects = rects;
   }
 
+  public getCameraState(): {
+    zoom: number;
+    panX: number;
+    panY: number;
+    targetZoom: number;
+    targetPanX: number;
+    targetPanY: number;
+    animating: boolean;
+  } {
+    return {
+      zoom: this.cameraZoom,
+      panX: this.cameraPanX,
+      panY: this.cameraPanY,
+      targetZoom: this.targetZoom,
+      targetPanX: this.targetPanX,
+      targetPanY: this.targetPanY,
+      animating: this.zoomAnimActive,
+    };
+  }
+
+  public isZoomSettledAbove(threshold = 1.25): boolean {
+    return !this.zoomAnimActive && this.cameraZoom >= threshold;
+  }
+
+  private clampCameraValues(
+    zoom: number,
+    panX: number,
+    panY: number,
+    viewW: number,
+    viewH: number
+  ): { zoom: number; panX: number; panY: number } {
+    const rawZoom = Number.isFinite(zoom) ? koiClamp(zoom, 1.0, 3.0) : 1.0;
+    const z = rawZoom <= 1.005 ? 1.0 : rawZoom;
+    let px = 0;
+    let py = 0;
+    if (z > 1.0 && viewW > 0 && viewH > 0) {
+      px = Number.isFinite(panX) ? koiClamp(panX, viewW * (1 - z), 0) : 0;
+      py = Number.isFinite(panY) ? koiClamp(panY, viewH * (1 - z), 0) : 0;
+    }
+    return { zoom: z, panX: px, panY: py };
+  }
+
+  public setCameraState(
+    zoom: number,
+    panX: number,
+    panY: number,
+    viewW: number,
+    viewH: number,
+    targetZoom?: number,
+    targetPanX?: number,
+    targetPanY?: number
+  ): boolean {
+    const cur = this.clampCameraValues(zoom, panX, panY, viewW, viewH);
+    const tgt = this.clampCameraValues(
+      targetZoom ?? cur.zoom,
+      targetPanX ?? cur.panX,
+      targetPanY ?? cur.panY,
+      viewW,
+      viewH
+    );
+    const changed =
+      Math.abs(cur.zoom - this.cameraZoom) > 1e-5 ||
+      Math.abs(cur.panX - this.cameraPanX) > 0.05 ||
+      Math.abs(cur.panY - this.cameraPanY) > 0.05 ||
+      Math.abs(tgt.zoom - this.targetZoom) > 1e-5;
+    this.cameraZoom = cur.zoom;
+    this.cameraPanX = cur.panX;
+    this.cameraPanY = cur.panY;
+    this.targetZoom = tgt.zoom;
+    this.targetPanX = tgt.panX;
+    this.targetPanY = tgt.panY;
+    this.zoomAnimActive =
+      Math.abs(this.targetZoom - this.cameraZoom) > 1e-4 ||
+      Math.abs(this.targetPanX - this.cameraPanX) > 0.25 ||
+      Math.abs(this.targetPanY - this.cameraPanY) > 0.25;
+    return changed;
+  }
+
+  public zoomAtScreenPoint(
+    factor: number,
+    screenX: number,
+    screenY: number,
+    viewW: number,
+    viewH: number
+  ): boolean {
+    if (viewW < 1 || viewH < 1) return false;
+    const rawNext = koiClamp(this.targetZoom * factor, 1.0, 3.0);
+    const nextZoom = rawNext <= 1.005 ? 1.0 : rawNext;
+    const worldX = (screenX - this.targetPanX) / this.targetZoom;
+    const worldY = (screenY - this.targetPanY) / this.targetZoom;
+    const rawPanX = screenX - worldX * nextZoom;
+    const rawPanY = screenY - worldY * nextZoom;
+    const tgt = this.clampCameraValues(nextZoom, rawPanX, rawPanY, viewW, viewH);
+
+    const changed =
+      Math.abs(tgt.zoom - this.targetZoom) > 1e-5 ||
+      Math.abs(tgt.panX - this.targetPanX) > 0.05 ||
+      Math.abs(tgt.panY - this.targetPanY) > 0.05;
+    if (!changed) return false;
+
+    this.targetZoom = tgt.zoom;
+    this.targetPanX = tgt.panX;
+    this.targetPanY = tgt.panY;
+
+    if (this.rippleReducedMotion) {
+      this.cameraZoom = tgt.zoom;
+      this.cameraPanX = tgt.panX;
+      this.cameraPanY = tgt.panY;
+      this.zoomAnimActive = false;
+    } else {
+      this.zoomStartZoom = this.cameraZoom;
+      this.zoomStartPanX = this.cameraPanX;
+      this.zoomStartPanY = this.cameraPanY;
+      this.zoomAnimStartMs = performance.now();
+      this.zoomAnimActive = true;
+    }
+    return true;
+  }
+
+  public panByScreenDelta(dx: number, dy: number, viewW: number, viewH: number): boolean {
+    if (this.cameraZoom <= 1.001 && this.targetZoom <= 1.001) return false;
+    const cur = this.clampCameraValues(
+      this.cameraZoom,
+      this.cameraPanX + dx,
+      this.cameraPanY + dy,
+      viewW,
+      viewH
+    );
+    const tgt = this.clampCameraValues(
+      this.targetZoom,
+      this.targetPanX + dx,
+      this.targetPanY + dy,
+      viewW,
+      viewH
+    );
+    const changed =
+      Math.abs(cur.panX - this.cameraPanX) > 0.05 ||
+      Math.abs(cur.panY - this.cameraPanY) > 0.05 ||
+      Math.abs(tgt.panX - this.targetPanX) > 0.05 ||
+      Math.abs(tgt.panY - this.targetPanY) > 0.05;
+    this.cameraPanX = cur.panX;
+    this.cameraPanY = cur.panY;
+    this.targetPanX = tgt.panX;
+    this.targetPanY = tgt.panY;
+    this.zoomStartPanX = koiClamp(this.zoomStartPanX + dx, viewW * (1 - this.zoomStartZoom), 0);
+    this.zoomStartPanY = koiClamp(this.zoomStartPanY + dy, viewH * (1 - this.zoomStartZoom), 0);
+    return changed;
+  }
+
   public syncDynamicStateFrom(other: KoiPondRenderer): void {
+    this.cameraZoom = other.cameraZoom;
+    this.cameraPanX = other.cameraPanX;
+    this.cameraPanY = other.cameraPanY;
+    this.targetZoom = other.targetZoom;
+    this.targetPanX = other.targetPanX;
+    this.targetPanY = other.targetPanY;
+    this.zoomStartZoom = other.zoomStartZoom;
+    this.zoomStartPanX = other.zoomStartPanX;
+    this.zoomStartPanY = other.zoomStartPanY;
+    this.zoomAnimStartMs = other.zoomAnimStartMs;
+    this.zoomAnimActive = other.zoomAnimActive;
     this.timeOfDayHours = other.timeOfDayHours;
     this.configuredTheme = other.configuredTheme;
     this.currentPalette = other.currentPalette;
@@ -1091,13 +1265,20 @@ export class KoiPondRenderer {
     const p = koiClamp(progress, 0, 1);
     const ease = p * p * p * (p * (p * 6 - 15) + 10);
 
-    // Keep the pond at full viewport dimensions at all times (never shrink the pond into the frame,
-    // eliminating all per-frame offscreen canvas re-bakes during Profile open/close!).
-    this.activeRect.x = 0;
-    this.activeRect.y = 0;
-    this.activeRect.w = viewW;
-    this.activeRect.h = viewH;
-    this.activeRect.scale = 1.0;
+    if (this.cameraZoom <= 1.001) {
+      this.cameraZoom = 1.0;
+      this.cameraPanX = 0;
+      this.cameraPanY = 0;
+    } else if (viewW > 0 && viewH > 0) {
+      this.cameraPanX = koiClamp(this.cameraPanX, viewW * (1 - this.cameraZoom), 0);
+      this.cameraPanY = koiClamp(this.cameraPanY, viewH * (1 - this.cameraZoom), 0);
+    }
+
+    this.activeRect.x = this.cameraPanX;
+    this.activeRect.y = this.cameraPanY;
+    this.activeRect.w = viewW * this.cameraZoom;
+    this.activeRect.h = viewH * this.cameraZoom;
+    this.activeRect.scale = this.cameraZoom;
     this.activeRect.progress = ease;
     return this.activeRect;
   }
@@ -1215,6 +1396,20 @@ export class KoiPondRenderer {
   }
 
   private updateTransition(now: number): void {
+    if (this.zoomAnimActive) {
+      const elapsedZoom = Math.max(0, now - this.zoomAnimStartMs);
+      const rawZoomT = koiClamp(elapsedZoom / this.zoomAnimDurationMs, 0, 1);
+      const easeZoomT = rawZoomT * rawZoomT * rawZoomT * (rawZoomT * (rawZoomT * 6 - 15) + 10);
+      this.cameraZoom = koiLerp(this.zoomStartZoom, this.targetZoom, easeZoomT);
+      this.cameraPanX = koiLerp(this.zoomStartPanX, this.targetPanX, easeZoomT);
+      this.cameraPanY = koiLerp(this.zoomStartPanY, this.targetPanY, easeZoomT);
+      if (rawZoomT >= 1) {
+        this.cameraZoom = this.targetZoom;
+        this.cameraPanX = this.targetPanX;
+        this.cameraPanY = this.targetPanY;
+        this.zoomAnimActive = false;
+      }
+    }
     if (this.portraitStyleTransActive) {
       const elapsedStyle = Math.max(0, now - this.portraitStyleTransStart);
       this.portraitStyleTransProgress = koiClamp(
@@ -1261,14 +1456,20 @@ export class KoiPondRenderer {
     return bundle;
   }
 
-  private ensureParchmentCanvas(width: number, height: number, isLight: boolean): HTMLCanvasElement {
+  private ensureParchmentCanvas(
+    width: number,
+    height: number,
+    isLight: boolean,
+    detailScale = 1
+  ): HTMLCanvasElement {
     const w = Math.max(1, Math.round(width));
     const h = Math.max(1, Math.round(height));
+    const ds = detailScale > 1 ? 2 : 1;
     if (this.artStyle === "sumie") {
-      const bundle = this.ensureSumiePaperBundle(w, h, isLight);
+      const bundle = this.ensureSumiePaperBundle(w * ds, h * ds, isLight);
       return bundle.canvas;
     }
-    const key = `${w}x${h}:${isLight ? "washi-day-v3" : "washi-night-v3"}`;
+    const key = `${w}x${h}@${ds}x:${isLight ? "washi-day-v3" : "washi-night-v3"}`;
     const cached = this.parchmentCache.get(key);
     if (cached) {
       return cached;
@@ -1278,12 +1479,13 @@ export class KoiPondRenderer {
     }
 
     const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
+    canvas.width = w * ds;
+    canvas.height = h * ds;
     this.parchmentCache.set(key, canvas);
 
     const pCtx = canvas.getContext("2d");
     if (!pCtx) return canvas;
+    if (ds > 1) pCtx.setTransform(ds, 0, 0, ds, 0, 0);
 
     // 1. Warm handmade Torinoko Washi base tone
     const cx = w * 0.46;
@@ -1468,17 +1670,18 @@ export class KoiPondRenderer {
     }
 
     // `mokkotsu` & `sumie`: Full-floor Voronoi cobblestone/pebble mosaic + mid-depth border boulders (blended smoothly by time of day)
+    const detailScale = this.isZoomSettledAbove(1.35) ? 2 : 1;
     const daylight = this.getDaylightFactor();
     if (daylight >= 0.998) {
-      const pebbleDay = this.ensurePebbleBedCanvas(worldW, worldH, true, style);
+      const pebbleDay = this.ensurePebbleBedCanvas(worldW, worldH, true, style, detailScale);
       ctx.drawImage(pebbleDay, 0, 0, worldW, worldH);
     } else if (daylight <= 0.002) {
-      const pebbleNight = this.ensurePebbleBedCanvas(worldW, worldH, false, style);
+      const pebbleNight = this.ensurePebbleBedCanvas(worldW, worldH, false, style, detailScale);
       ctx.drawImage(pebbleNight, 0, 0, worldW, worldH);
     } else {
-      const pebbleDay = this.ensurePebbleBedCanvas(worldW, worldH, true, style);
+      const pebbleDay = this.ensurePebbleBedCanvas(worldW, worldH, true, style, detailScale);
       ctx.drawImage(pebbleDay, 0, 0, worldW, worldH);
-      const pebbleNight = this.ensurePebbleBedCanvas(worldW, worldH, false, style);
+      const pebbleNight = this.ensurePebbleBedCanvas(worldW, worldH, false, style, detailScale);
       ctx.save();
       ctx.globalAlpha = 1.0 - daylight;
       ctx.drawImage(pebbleNight, 0, 0, worldW, worldH);
@@ -6593,11 +6796,13 @@ export class KoiPondRenderer {
     width: number,
     height: number,
     isLight: boolean,
-    style: KoiArtStyle
+    style: KoiArtStyle,
+    detailScale = 1
   ): HTMLCanvasElement {
     const w = Math.max(64, Math.round(width));
     const h = Math.max(64, Math.round(height));
-    const key = `${w}x${h}:${isLight ? "light-moss-v7" : "dark-moss-v7"}:${style}`;
+    const ds = detailScale > 1 ? 2 : 1;
+    const key = `${w}x${h}@${ds}x:${isLight ? "light-moss-v7" : "dark-moss-v7"}:${style}`;
     const cached = this.pebbleBedCache.get(key);
     if (cached) {
       return cached;
@@ -6607,18 +6812,21 @@ export class KoiPondRenderer {
     }
 
     const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
+    canvas.width = w * ds;
+    canvas.height = h * ds;
     this.pebbleBedCache.set(key, canvas);
 
     const pCtx = canvas.getContext("2d");
     if (!pCtx) return canvas;
+    if (ds > 1) pCtx.setTransform(ds, 0, 0, ds, 0, 0);
     pCtx.clearRect(0, 0, w, h);
 
     // Sumi-e: 4–5 tonal-tier wet-on-wet background lotus pad mosaic settling into paper tooth
     if ((style as KoiArtStyle) === "sumie") {
-      const paper = this.ensureSumiePaperBundle(w, h, isLight);
-      const mosaic = bakeSumieWashMosaic(w, h, isLight, paper.tooth, paper.toothW, paper.toothH);
+      const sw = w * ds;
+      const sh = h * ds;
+      const paper = this.ensureSumiePaperBundle(sw, sh, isLight);
+      const mosaic = bakeSumieWashMosaic(sw, sh, isLight, paper.tooth, paper.toothW, paper.toothH);
       pCtx.drawImage(mosaic, 0, 0, w, h);
       return canvas;
     }
@@ -8394,7 +8602,7 @@ export class KoiPondRenderer {
     const renderScale = 0.55;
     const bw = Math.max(64, Math.round(targetW * rectScale * renderScale));
     const bh = Math.max(64, Math.round(targetH * rectScale * renderScale));
-    const refH = Math.max(64, Math.round(fullViewH * renderScale));
+    const refH = Math.max(64, Math.round(fullViewH * rectScale * renderScale));
 
     if (!this.causticGLCanvas) {
       const c = document.createElement("canvas");
@@ -9986,11 +10194,12 @@ export class KoiPondRenderer {
       if (cCtx) {
         cCtx.clearRect(0, 0, w, h);
 
+        const causticScale = this.isZoomSettledAbove(1.05) ? Math.min(2.0, this.cameraZoom) : 1.0;
         const glCaustics = this.renderCausticsShaderCanvas(
           w,
           h,
           viewH,
-          rect.scale,
+          causticScale,
           time,
           style,
           isLight
@@ -10006,10 +10215,10 @@ export class KoiPondRenderer {
           if (pat) {
             cCtx.save();
             cCtx.globalAlpha = isLight ? 0.54 : 0.48 * darkFlashStrength;
-            const shift1X = (Math.sin(time * 0.38) * 115 + Math.cos(time * 0.21) * 42) * invRectScale;
-            const shift1Y = (Math.cos(time * 0.31) * 98 + Math.sin(time * 0.19) * 36) * invRectScale;
+            const shift1X = Math.sin(time * 0.38) * 115 + Math.cos(time * 0.21) * 42;
+            const shift1Y = Math.cos(time * 0.31) * 98 + Math.sin(time * 0.19) * 36;
             cCtx.translate(w * 0.5 + shift1X, h * 0.5 + shift1Y);
-            cCtx.scale(1.16 * invRectScale, 1.06 * invRectScale);
+            cCtx.scale(1.16, 1.06);
             cCtx.fillStyle = pat;
             cCtx.fillRect(-w - 512, -h - 512, w * 2 + 1024, h * 2 + 1024);
             cCtx.restore();
@@ -12078,16 +12287,24 @@ export class KoiPondRenderer {
     const daylight = this.getDaylightFactor();
     const isLight = daylight >= 0.35;
 
+    // Apply camera zoom & pan around the pond bed + living world (kept under UI overlays & portrait frame)
+    ctx.save();
+    if (rect.scale !== 1 || rect.x !== 0 || rect.y !== 0) {
+      ctx.translate(rect.x, rect.y);
+      ctx.scale(rect.scale, rect.scale);
+    }
+
+    const detailScale = this.isZoomSettledAbove(1.35) ? 2 : 1;
     if (daylight >= 0.998) {
-      const parchmentDay = this.ensureParchmentCanvas(width, height, true);
+      const parchmentDay = this.ensureParchmentCanvas(width, height, true, detailScale);
       ctx.drawImage(parchmentDay, 0, 0, width, height);
     } else if (daylight <= 0.002) {
-      const parchmentNight = this.ensureParchmentCanvas(width, height, false);
+      const parchmentNight = this.ensureParchmentCanvas(width, height, false, detailScale);
       ctx.drawImage(parchmentNight, 0, 0, width, height);
     } else {
-      const parchmentDay = this.ensureParchmentCanvas(width, height, true);
+      const parchmentDay = this.ensureParchmentCanvas(width, height, true, detailScale);
       ctx.drawImage(parchmentDay, 0, 0, width, height);
-      const parchmentNight = this.ensureParchmentCanvas(width, height, false);
+      const parchmentNight = this.ensureParchmentCanvas(width, height, false, detailScale);
       ctx.save();
       ctx.globalAlpha = 1.0 - daylight;
       ctx.drawImage(parchmentNight, 0, 0, width, height);
@@ -12095,7 +12312,6 @@ export class KoiPondRenderer {
     }
 
     // Always render the living pond layers (never go blank when the Profile Menu opens)
-    ctx.save();
     if (config.showWaterTexture !== false) {
       this.paintSubmergedWaterWash(ctx, effW, effH, time, isLight);
     }

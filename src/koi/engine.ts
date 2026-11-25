@@ -99,6 +99,10 @@ export class KoiPondEngine {
   private intersectionObserver: IntersectionObserver;
   private disposed = false;
 
+  private isPanning = false;
+  private panLastX = 0;
+  private panLastY = 0;
+
   constructor(
     private canvas: HTMLCanvasElement,
     koiSpecs?: KoiSpec[],
@@ -164,6 +168,11 @@ export class KoiPondEngine {
     this.reducedMotion.addEventListener("change", this.onMotionPreference);
     window.addEventListener("pointermove", this.onPointerMove, { passive: true });
     window.addEventListener("pointerdown", this.onPointerDown, { passive: true });
+    window.addEventListener("pointerup", this.onPointerUp);
+    window.addEventListener("pointercancel", this.onPointerUp);
+    window.addEventListener("blur", this.onPointerUp);
+    window.addEventListener("mousedown", this.onMouseDown);
+    window.addEventListener("wheel", this.onWheel, { passive: false });
     window.addEventListener("click", this.onWindowClick);
     window.addEventListener("keydown", this.onWindowKeyDown);
 
@@ -256,6 +265,12 @@ export class KoiPondEngine {
       menuBlurPx: this.renderer.getMenuBlurPx(),
       timeOfDayHours: this.renderer.getTimeOfDayHours(),
       manualThemeOverride: this.manualThemeOverride,
+      pondZoom: this.renderer.getCameraState().zoom,
+      pondPanX: this.renderer.getCameraState().panX,
+      pondPanY: this.renderer.getCameraState().panY,
+      pondTargetZoom: this.renderer.getCameraState().targetZoom,
+      pondTargetPanX: this.renderer.getCameraState().targetPanX,
+      pondTargetPanY: this.renderer.getCameraState().targetPanY,
     };
   }
 
@@ -280,6 +295,18 @@ export class KoiPondEngine {
       }
       if (typeof state.menuBlurPx === "number") {
         this.renderer.setMenuBlurPx(state.menuBlurPx);
+      }
+      if (typeof state.pondZoom === "number") {
+        this.renderer.setCameraState(
+          state.pondZoom,
+          state.pondPanX ?? 0,
+          state.pondPanY ?? 0,
+          this.viewW,
+          this.viewH,
+          state.pondTargetZoom,
+          state.pondTargetPanX,
+          state.pondTargetPanY
+        );
       }
       this.profileOpen = state.isPortfolioOpen;
       this.renderer.setProfileTargetOpen(this.profileOpen);
@@ -359,6 +386,7 @@ export class KoiPondEngine {
   public setActiveLayer(active: boolean): void {
     this.isActiveLayer = active;
     if (!active) {
+      this.isPanning = false;
       this.world.pointer.active = false;
       this.renderer.setFlashlightPointer(-1, -1, false);
     }
@@ -398,6 +426,11 @@ export class KoiPondEngine {
     this.reducedMotion.removeEventListener("change", this.onMotionPreference);
     window.removeEventListener("pointermove", this.onPointerMove);
     window.removeEventListener("pointerdown", this.onPointerDown);
+    window.removeEventListener("pointerup", this.onPointerUp);
+    window.removeEventListener("pointercancel", this.onPointerUp);
+    window.removeEventListener("blur", this.onPointerUp);
+    window.removeEventListener("mousedown", this.onMouseDown);
+    window.removeEventListener("wheel", this.onWheel);
     window.removeEventListener("click", this.onWindowClick);
     window.removeEventListener("keydown", this.onWindowKeyDown);
     document.documentElement.removeEventListener("pointerleave", this.onPointerLeave);
@@ -722,13 +755,13 @@ export class KoiPondEngine {
       this.emitStateChange();
     });
 
-    // 2b. 秘術 Archive Scroll Toggle Button (Below Profile Coin)
+    // 2b. 実績 Archive Scroll Toggle Button (Below Profile Coin)
     const scrollBtn = document.createElement("button");
     scrollBtn.type = "button";
     scrollBtn.className = "ms-ctrl-btn";
     scrollBtn.setAttribute("aria-label", "Toggle archive scroll gallery");
     scrollBtn.setAttribute("aria-expanded", "false");
-    scrollBtn.title = "秘術 Archive Scroll";
+    scrollBtn.title = "実績 Archive Scroll";
 
     const scrollIcon = document.createElement("img");
     scrollIcon.className = "ms-ctrl-icon";
@@ -878,7 +911,7 @@ export class KoiPondEngine {
         this.coinUris[variant].oni = bakedUri;
         this.applyCoinArtForCurrentState();
       });
-      // Bake sculpted 秘術 scroll coin medallion for Mokkotsu (brass) and Sumi-e (ink-black / silver patina)
+      // Bake sculpted 実績 scroll coin medallion for Mokkotsu (brass) and Sumi-e (ink-black / silver patina)
       bakeMizuhikiScrollCoinDataUrl(variant, (bakedUri) => {
         this.coinUris[variant].scroll = bakedUri;
         this.applyCoinArtForCurrentState();
@@ -1028,7 +1061,11 @@ export class KoiPondEngine {
   }
 
   private getEffectiveDpr(): number {
-    return Math.min(window.devicePixelRatio || 1, this.dprCap);
+    const baseDpr = Math.min(window.devicePixelRatio || 1, this.dprCap);
+    if (this.renderer.isZoomSettledAbove(1.25)) {
+      return Math.min(2.5, Math.max(baseDpr, this.renderer.getCameraState().zoom));
+    }
+    return baseDpr;
   }
 
   private updateCanvasResolution(): boolean {
@@ -1081,6 +1118,7 @@ export class KoiPondEngine {
   }
 
   public renderFrame() {
+    this.updateCanvasResolution();
     const ctx = this.getCtx();
     if (!ctx || this.viewW < 1 || this.viewH < 1) return;
     this.renderer.setActiveColumnRects([
@@ -1163,6 +1201,11 @@ export class KoiPondEngine {
   private applyQualityLevel(level: number) {
     this.qualityLevel = level;
     const config = this.world.config;
+    const cam = this.renderer.getCameraState();
+    if (cam.zoom >= 1.25 || cam.targetZoom >= 1.25) {
+      config.detailQuality = level >= MAX_QUALITY_LEVEL ? "medium" : "high";
+      return;
+    }
     config.detailQuality =
       level >= 2 ? "low" : level === 1 && this.baseDetail === "high" ? "medium" : this.baseDetail;
   }
@@ -1308,21 +1351,76 @@ export class KoiPondEngine {
     return this.isPointInPortraitFrame(clientX - rect.left, clientY - rect.top);
   }
 
+  private isOverUi(target: EventTarget | null): boolean {
+    const targetEl = target instanceof Element ? target : null;
+    return !!(
+      targetEl &&
+      (targetEl.closest(".ms-floating-controls") ||
+        targetEl.closest(".bp-col") ||
+        targetEl.closest(".gs-scroll-panel") ||
+        targetEl.closest(".gs-lightbox"))
+    );
+  }
+
+  private onWheel = (e: WheelEvent) => {
+    if (!this.isActiveLayer || this.viewW < 1 || this.viewH < 1) return;
+    if (this.galleryOpen || this.isOverUi(e.target)) return;
+    if (e.deltaY === 0) return;
+
+    e.preventDefault();
+    const rect = this.canvas.getBoundingClientRect();
+    const rawX = e.clientX - rect.left;
+    const rawY = e.clientY - rect.top;
+    if (this.isPointInPortraitFrame(rawX, rawY)) return;
+
+    const factor = Math.exp(-e.deltaY * 0.0015);
+    if (this.renderer.zoomAtScreenPoint(factor, rawX, rawY, this.viewW, this.viewH)) {
+      const cam = this.renderer.getCameraState();
+      const zoomed = cam.zoom > 1.001 || cam.targetZoom > 1.001;
+      if (!zoomed) this.isPanning = false;
+      this.applyQualityLevel(this.qualityLevel);
+      this.canvas.style.cursor = this.isPanning ? "grabbing" : zoomed ? "grab" : "";
+      this.renderFrame();
+      this.schedule();
+      this.emitStateChange();
+    }
+  };
+
+  private onMouseDown = (e: MouseEvent) => {
+    if (!this.isActiveLayer || e.button !== 1) return;
+    if (this.isOverUi(e.target)) return;
+    const cam = this.renderer.getCameraState();
+    if (cam.zoom > 1.001 || cam.targetZoom > 1.001) {
+      e.preventDefault();
+    }
+  };
+
   private onPointerMove = (e: PointerEvent) => {
     if (!this.isActiveLayer) return;
+    if (this.isPanning) {
+      const dx = e.clientX - this.panLastX;
+      const dy = e.clientY - this.panLastY;
+      this.panLastX = e.clientX;
+      this.panLastY = e.clientY;
+      if (this.renderer.panByScreenDelta(dx, dy, this.viewW, this.viewH)) {
+        this.renderFrame();
+        this.schedule();
+        this.emitStateChange();
+      }
+      return;
+    }
+
     const rect = this.canvas.getBoundingClientRect();
     const rawX = e.clientX - rect.left;
     const rawY = e.clientY - rect.top;
     const inViewport = rawX >= 0 && rawY >= 0 && rawX <= rect.width && rawY <= rect.height;
     this.renderer.setFlashlightPointer(rawX, rawY, inViewport);
 
-    const targetEl = e.target instanceof Element ? e.target : null;
-    const overUI = !!(
-      targetEl &&
-      (targetEl.closest(".ms-floating-controls") || targetEl.closest(".bp-col") || targetEl.closest(".gs-scroll-panel") || targetEl.closest(".gs-lightbox"))
-    );
+    const overUI = this.isOverUi(e.target);
     const overPortrait = !overUI && this.isPointInPortraitFrame(rawX, rawY);
-    this.canvas.style.cursor = overPortrait ? "pointer" : "";
+    const cam = this.renderer.getCameraState();
+    const zoomed = cam.zoom > 1.001 || cam.targetZoom > 1.001;
+    this.canvas.style.cursor = overPortrait ? "pointer" : zoomed && !overUI ? "grab" : "";
 
     const { x, y, inside } = this.toLocal(e);
     const p = this.world.pointer;
@@ -1331,8 +1429,24 @@ export class KoiPondEngine {
     p.active = inside && e.pointerType !== "touch";
   };
 
-  private onPointerDown = (_e: PointerEvent) => {
-    // Stationary clicks vs WebGL fluid drags are disambiguated on click (onWindowClick)
+  private onPointerDown = (e: PointerEvent) => {
+    if (!this.isActiveLayer || e.button !== 1) return;
+    if (this.isOverUi(e.target)) return;
+    const cam = this.renderer.getCameraState();
+    if (cam.zoom > 1.001 || cam.targetZoom > 1.001) {
+      this.isPanning = true;
+      this.panLastX = e.clientX;
+      this.panLastY = e.clientY;
+      this.canvas.style.cursor = "grabbing";
+    }
+  };
+
+  private onPointerUp = () => {
+    if (!this.isPanning) return;
+    this.isPanning = false;
+    const cam = this.renderer.getCameraState();
+    const zoomed = cam.zoom > 1.001 || cam.targetZoom > 1.001;
+    this.canvas.style.cursor = zoomed ? "grab" : "";
   };
 
   private onWindowClick = (e: MouseEvent) => {
