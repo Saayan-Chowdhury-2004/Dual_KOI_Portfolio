@@ -8,8 +8,11 @@
 import {
   createKoiFish,
   rescalePondFish,
+  rescaleTadpoles,
   seedPondFish,
+  seedTadpoles,
   stepPondFish,
+  stepTadpoles,
   rescaleKoi,
   updateKoiSimulation,
   type PondPointerState
@@ -17,7 +20,7 @@ import {
 import { SPINE_NODE_COUNT } from './koiGeometry';
 import { koiAngleDiff, koiClamp, KOI_TAU } from './koiMath';
 import { PondEnvironment } from './koiPond';
-import type { KoiFish, KoiPondConfig, KoiSpec, PondFish } from './koiTypes';
+import type { KoiFish, KoiPondConfig, KoiSpec, PondFish, PondTadpole } from './koiTypes';
 import { VARIETY_ORDER } from './koiVarieties';
 
 export const DEFAULT_KOI_CONFIG: KoiPondConfig = {
@@ -37,6 +40,7 @@ export const DEFAULT_KOI_CONFIG: KoiPondConfig = {
 
 const MAX_KOI_SNAPSHOT = 4;
 const MAX_MINNOW_SNAPSHOT = 512;
+const MAX_TADPOLE_SNAPSHOT = 64;
 
 export class PondWorld {
   width = 0;
@@ -44,6 +48,7 @@ export class PondWorld {
   time = 0;
   koi: KoiFish[] = [];
   fish: PondFish[] = [];
+  tadpoles: PondTadpole[] = [];
 
   readonly pond = new PondEnvironment();
   readonly pointer: PondPointerState = {
@@ -57,6 +62,7 @@ export class PondWorld {
 
   /** Small fish are stepped in discrete quanta to match the glyph cadence. */
   private fishStepAccum = 0;
+  private readonly tadpoleFollowState = { followTimer: 0, cooldown: 0 };
 
   // Preallocated fixed-step interpolation snapshots (zero allocations per frame)
   private readonly prevKoiSpineX = new Float32Array(MAX_KOI_SNAPSHOT * SPINE_NODE_COUNT);
@@ -70,6 +76,8 @@ export class PondWorld {
   private readonly currKoiScalars = new Float32Array(MAX_KOI_SNAPSHOT * 9);
   private readonly prevMinnowXY = new Float32Array(MAX_MINNOW_SNAPSHOT * 2);
   private readonly currMinnowXY = new Float32Array(MAX_MINNOW_SNAPSHOT * 2);
+  private readonly prevTadpoleXY = new Float32Array(MAX_TADPOLE_SNAPSHOT * 2);
+  private readonly currTadpoleXY = new Float32Array(MAX_TADPOLE_SNAPSHOT * 2);
   private prevTime = 0;
   private currTime = 0;
   private hasSnapshot = false;
@@ -92,10 +100,15 @@ export class PondWorld {
 
     if (hadSize) {
       rescalePondFish(this.fish, oldW, oldH, width, height);
+      rescaleTadpoles(this.tadpoles, oldW, oldH, width, height);
       rescaleKoi(this.koi, oldW, oldH, width, height);
       for (const f of this.fish) {
         f.x = koiClamp(f.x, -60, width + 60);
         f.y = koiClamp(f.y, -60, height + 60);
+      }
+      for (const t of this.tadpoles) {
+        t.x = koiClamp(t.x, 10, Math.max(20, width - 10));
+        t.y = koiClamp(t.y, 10, Math.max(20, height - 10));
       }
       this.hasSnapshot = false;
     }
@@ -162,6 +175,12 @@ export class PondWorld {
       mf.y = koiClamp(mf.y * sy, -60, targetH + 60);
     }
 
+    for (let i = 0; i < this.tadpoles.length; i++) {
+      const tp = this.tadpoles[i];
+      tp.x = koiClamp(tp.x * sx, 10, Math.max(20, targetW - 10));
+      tp.y = koiClamp(tp.y * sy, 10, Math.max(20, targetH - 10));
+    }
+
     for (let i = 0; i < this.pond.ripples.length; i++) {
       const r = this.pond.ripples[i];
       r.x *= sx;
@@ -199,6 +218,9 @@ export class PondWorld {
     }
 
     this.fish = seedPondFish(w, h);
+    this.tadpoles = seedTadpoles(w, h);
+    this.tadpoleFollowState.followTimer = 0;
+    this.tadpoleFollowState.cooldown = 0;
     this.fishStepAccum = 0;
     this.hasSnapshot = false;
   }
@@ -229,6 +251,12 @@ export class PondWorld {
     for (let i = 0; i < mCount; i++) {
       this.prevMinnowXY[i * 2] = this.fish[i].x;
       this.prevMinnowXY[i * 2 + 1] = this.fish[i].y;
+    }
+
+    const tCount = Math.min(MAX_TADPOLE_SNAPSHOT, this.tadpoles.length);
+    for (let i = 0; i < tCount; i++) {
+      this.prevTadpoleXY[i * 2] = this.tadpoles[i].x;
+      this.prevTadpoleXY[i * 2 + 1] = this.tadpoles[i].y;
     }
     this.hasSnapshot = true;
   }
@@ -334,6 +362,16 @@ export class PondWorld {
       mf.y = this.prevMinnowXY[ox + 1] + (mf.y - this.prevMinnowXY[ox + 1]) * a;
     }
 
+    const tCount = Math.min(MAX_TADPOLE_SNAPSHOT, this.tadpoles.length);
+    for (let i = 0; i < tCount; i++) {
+      const tp = this.tadpoles[i];
+      const ox = i * 2;
+      this.currTadpoleXY[ox] = tp.x;
+      this.currTadpoleXY[ox + 1] = tp.y;
+      tp.x = this.prevTadpoleXY[ox] + (tp.x - this.prevTadpoleXY[ox]) * a;
+      tp.y = this.prevTadpoleXY[ox + 1] + (tp.y - this.prevTadpoleXY[ox + 1]) * a;
+    }
+
     this.isInterpolated = true;
   }
 
@@ -375,6 +413,14 @@ export class PondWorld {
       mf.y = this.currMinnowXY[ox + 1];
     }
 
+    const tCount = Math.min(MAX_TADPOLE_SNAPSHOT, this.tadpoles.length);
+    for (let i = 0; i < tCount; i++) {
+      const tp = this.tadpoles[i];
+      const ox = i * 2;
+      tp.x = this.currTadpoleXY[ox];
+      tp.y = this.currTadpoleXY[ox + 1];
+    }
+
     this.isInterpolated = false;
   }
 
@@ -407,6 +453,17 @@ export class PondWorld {
         d
       );
     }
+
+    stepTadpoles(
+      this.tadpoles,
+      this.koi,
+      this.pointer,
+      this.width,
+      this.height,
+      this.time,
+      dt,
+      this.tadpoleFollowState
+    );
 
     this.pond.update(dt);
   }

@@ -299,3 +299,25 @@ export interface PondFish {
   col: number;
   row: number;
 }
+
+/** One schooling tadpole belonging to either the large (0) or small (1) dynamic school. */
+export interface PondTadpole {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  /** School index: 0 = large school, 1 = small school. */
+  schoolId: 0 | 1;
+  /** Individual body scale factor (~0.78..1.18). */
+  size: number;
+  /** 0 = dark charcoal-olive, 1 = warm brown, 2 = dark olive green. */
+  colorVariant: 0 | 1 | 2;
+  /** Tail wiggle phase (rad). */
+  phase: number;
+  /** Individual wander seed for organic shape-shifting motion. */
+  seed: number;
+  /** 0 calm -> 1 fleeing koi/pointer. */
+  alarm: number;
+  /** 0.65 deeper -> 1.0 shallower. */
+  depth: number;
+}

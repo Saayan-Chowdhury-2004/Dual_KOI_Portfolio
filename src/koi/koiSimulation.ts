@@ -13,7 +13,8 @@ import type {
   KoiSpec,
   KoiVariety,
   SpineNode,
-  PondFish
+  PondFish,
+  PondTadpole
 } from './koiTypes';
 import { generateVarietyPatchesAndColors, KOI_VARIETIES, pickKoiName, VARIETY_ORDER } from './koiVarieties';
 
@@ -1324,5 +1325,342 @@ export function rescalePondFish(
   for (const f of fish) {
     f.x *= sx;
     f.y *= sy;
+  }
+}
+
+const LOTUS_SANCTUARY_FRACS: ReadonlyArray<readonly [number, number]> = [
+  [0.25, 0.25],
+  [0.41, 0.13],
+  [0.14, 0.43],
+  [0.40, 0.39],
+  [0.54, 0.21],
+  [0.72, 0.71],
+  [0.54, 0.85],
+  [0.86, 0.53],
+  [0.55, 0.60],
+];
+
+/**
+ * Seeds 2 dynamic tadpole schools: one large (30) and one small (12),
+ * initially sheltered under the upper-left and lower-right lotus clusters
+ * with diverse charcoal, brown, and dark olive-green coloration.
+ */
+export function seedTadpoles(width: number, height: number): PondTadpole[] {
+  const schools: Array<{ id: 0 | 1; count: number; cxFrac: number; cyFrac: number; sizeMin: number; sizeMax: number }> = [
+    { id: 0, count: 30, cxFrac: 0.25, cyFrac: 0.26, sizeMin: 0.90, sizeMax: 1.18 },
+    { id: 1, count: 12, cxFrac: 0.72, cyFrac: 0.71, sizeMin: 0.78, sizeMax: 1.02 },
+  ];
+  const tadpoles: PondTadpole[] = [];
+
+  for (const sc of schools) {
+    const cx = width * sc.cxFrac;
+    const cy = height * sc.cyFrac;
+    const spread = Math.sqrt(sc.count) * 13;
+    const dir = Math.random() * KOI_TAU;
+    for (let i = 0; i < sc.count; i++) {
+      const a = Math.random() * KOI_TAU;
+      const r = Math.sqrt(Math.random()) * spread;
+      const spd = 28 + Math.random() * 14;
+      const heading = dir + (Math.random() - 0.5) * 0.9;
+      const colorVariant = (Math.floor(Math.random() * 3) as 0 | 1 | 2);
+      tadpoles.push({
+        x: koiClamp(cx + Math.cos(a) * r, 32, Math.max(40, width - 32)),
+        y: koiClamp(cy + Math.sin(a) * r, 32, Math.max(40, height - 32)),
+        vx: Math.cos(heading) * spd,
+        vy: Math.sin(heading) * spd,
+        schoolId: sc.id,
+        size: sc.sizeMin + Math.random() * (sc.sizeMax - sc.sizeMin),
+        colorVariant,
+        phase: Math.random() * KOI_TAU,
+        seed: Math.random() * 1000,
+        alarm: 0,
+        depth: 0.68 + Math.random() * 0.32,
+      });
+    }
+  }
+  return tadpoles;
+}
+
+/**
+ * Steps both dynamic tadpole schools:
+ * - Avoids the central open pond and patrols continuously under/between the lotus leaves without halting
+ * - Prevents criss-crossing: when the two schools meet, the smaller school follows the larger for 5s, then peels off
+ * - Evades all koi fishes (head, mid-body, and tail spine nodes) and pointer ripples
+ */
+export function stepTadpoles(
+  tadpoles: PondTadpole[],
+  koi: KoiFish[],
+  pointer: PondPointerState,
+  width: number,
+  height: number,
+  time: number,
+  dt: number,
+  followState: { followTimer: number; cooldown: number } = { followTimer: 0, cooldown: 0 }
+): void {
+  const n = tadpoles.length;
+  if (n === 0) return;
+
+  const neighborR = 86;
+  const neighborR2 = neighborR * neighborR;
+  const sepR = 20;
+  const sepR2 = sepR * sepR;
+  const crossSepR = 28;
+  const crossSepR2 = crossSepR * crossSepR;
+
+  // Compute school centroids and mean velocities for non-intersecting / 5s follow behavior
+  let c0x = 0, c0y = 0, v0x = 0, v0y = 0, n0 = 0;
+  let c1x = 0, c1y = 0, v1x = 0, v1y = 0, n1 = 0;
+  for (let i = 0; i < n; i++) {
+    const t = tadpoles[i];
+    if (t.schoolId === 0) {
+      c0x += t.x; c0y += t.y; v0x += t.vx; v0y += t.vy; n0++;
+    } else {
+      c1x += t.x; c1y += t.y; v1x += t.vx; v1y += t.vy; n1++;
+    }
+  }
+  if (n0 > 0) { c0x /= n0; c0y /= n0; v0x /= n0; v0y /= n0; }
+  if (n1 > 0) { c1x /= n1; c1y /= n1; v1x /= n1; v1y /= n1; }
+
+  if (followState.cooldown > 0) {
+    followState.cooldown = Math.max(0, followState.cooldown - dt);
+  }
+  if (followState.followTimer > 0) {
+    followState.followTimer = Math.max(0, followState.followTimer - dt);
+    if (followState.followTimer === 0) {
+      followState.cooldown = 6.5;
+    }
+  } else if (followState.cooldown <= 0 && n0 > 0 && n1 > 0) {
+    const centDist = Math.hypot(c1x - c0x, c1y - c0y);
+    let closeMeet = centDist < 155;
+    if (!closeMeet && centDist < 260) {
+      for (let i = 0; i < n && !closeMeet; i++) {
+        if (tadpoles[i].schoolId !== 1) continue;
+        for (let j = 0; j < n; j++) {
+          if (tadpoles[j].schoolId !== 0) continue;
+          const dx = tadpoles[i].x - tadpoles[j].x;
+          const dy = tadpoles[i].y - tadpoles[j].y;
+          if (dx * dx + dy * dy < 60 * 60) {
+            closeMeet = true;
+            break;
+          }
+        }
+      }
+    }
+    if (closeMeet) {
+      followState.followTimer = 5.0;
+    }
+  }
+  const isFollowing = followState.followTimer > 0 && n0 > 0;
+  const v0Spd = Math.hypot(v0x, v0y) || 1;
+  const dir0x = v0x / v0Spd;
+  const dir0y = v0y / v0Spd;
+
+  // Pick continuously moving lotus-leaf patrol waypoints for each school (never halting)
+  const padIdx0 = Math.floor(time * 0.24) % LOTUS_SANCTUARY_FRACS.length;
+  const padIdx1 = Math.floor(time * 0.29 + 5) % LOTUS_SANCTUARY_FRACS.length;
+  const [p0fx, p0fy] = LOTUS_SANCTUARY_FRACS[padIdx0];
+  const [p1fx, p1fy] = LOTUS_SANCTUARY_FRACS[padIdx1];
+  const patrol0X = width * p0fx + Math.cos(time * 0.85) * 48;
+  const patrol0Y = height * p0fy + Math.sin(time * 0.85) * 48;
+  const patrol1X = width * p1fx + Math.cos(time * 1.0 + 2.0) * 44;
+  const patrol1Y = height * p1fy + Math.sin(time * 1.0 + 2.0) * 44;
+
+  // Pre-collect koi spine danger points (head, mid, tail) for accurate body/tail avoidance
+  const dangerPts: Array<{ x: number; y: number; r: number }> = [];
+  for (let k = 0; k < koi.length; k++) {
+    const f = koi[k];
+    const sp = f.spine;
+    const fearR = Math.max(72, f.bodyLength * 0.55);
+    if (sp.length >= 10) {
+      dangerPts.push({ x: sp[0].x, y: sp[0].y, r: fearR });
+      const mid = sp[Math.floor(sp.length * 0.45)];
+      dangerPts.push({ x: mid.x, y: mid.y, r: fearR * 0.92 });
+      const tail = sp[sp.length - 1];
+      dangerPts.push({ x: tail.x, y: tail.y, r: fearR * 0.80 });
+    } else {
+      dangerPts.push({ x: f.x, y: f.y, r: fearR });
+    }
+  }
+
+  const midRx = Math.max(80, width * 0.22);
+  const midRy = Math.max(60, height * 0.22);
+
+  for (let i = 0; i < n; i++) {
+    const t = tadpoles[i];
+    const speed = Math.hypot(t.vx, t.vy) || 1;
+    const hx = t.vx / speed;
+    const hy = t.vy / speed;
+
+    let sx = 0;
+    let sy = 0;
+    let avx = 0;
+    let avy = 0;
+    let cx = 0;
+    let cy = 0;
+    let neighbours = 0;
+    let neighbourAlarm = 0;
+
+    for (let j = 0; j < n; j++) {
+      if (i === j) continue;
+      const o = tadpoles[j];
+      const dx = o.x - t.x;
+      const dy = o.y - t.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < 1e-4) continue;
+
+      const sameSchool = o.schoolId === t.schoolId;
+      const minSep2 = sameSchool ? sepR2 : crossSepR2;
+      const minSep = sameSchool ? sepR : crossSepR;
+
+      if (d2 < minSep2) {
+        const d = Math.sqrt(d2);
+        const push = (1 - d / minSep) / d;
+        sx -= dx * push * (sameSchool ? 1.0 : 1.85);
+        sy -= dy * push * (sameSchool ? 1.0 : 1.85);
+      }
+
+      if (!sameSchool || d2 >= neighborR2) continue;
+      avx += o.vx;
+      avy += o.vy;
+      cx += dx;
+      cy += dy;
+      neighbours++;
+      if (o.alarm > neighbourAlarm) neighbourAlarm = o.alarm;
+    }
+
+    let ax = sx * 205;
+    let ay = sy * 205;
+
+    // Breathing cohesion/alignment so the school stretches, splits around koi, and reforms organically
+    const cohesionPulse = 0.65 + 0.45 * Math.sin(time * 0.42 + t.schoolId * 2.1);
+    if (neighbours > 0) {
+      ax += (avx / neighbours - t.vx) * 1.45 + (cx / neighbours) * (0.95 * cohesionPulse);
+      ay += (avy / neighbours - t.vy) * 1.45 + (cy / neighbours) * (0.95 * cohesionPulse);
+    }
+
+    // Individual organic wander so the school never locks into a fixed shape or halts
+    const wanderAng = Math.sin(time * 1.35 + t.seed) * 1.8 + Math.cos(time * 0.62 + t.seed * 0.7) * 1.1;
+    ax += (hx * Math.cos(wanderAng) - hy * Math.sin(wanderAng)) * 22;
+    ay += (hx * Math.sin(wanderAng) + hy * Math.cos(wanderAng)) * 22;
+
+    if (t.schoolId === 1 && isFollowing) {
+      // Smaller school follows just behind/alongside the larger school's path for 5s without criss-crossing
+      const followTargetX = c0x - dir0x * 46;
+      const followTargetY = c0y - dir0y * 46;
+      ax += (v0x - t.vx) * 2.2 + (followTargetX - t.x) * 0.38;
+      ay += (v0y - t.vy) * 2.2 + (followTargetY - t.y) * 0.38;
+    } else {
+      // Patrol smoothly under/between lotus leaves (with gentle lateral peel-off during cooldown)
+      const targetX = t.schoolId === 0 ? patrol0X : patrol1X;
+      const targetY = t.schoolId === 0 ? patrol0Y : patrol1Y;
+      ax += (targetX - t.x) * 0.18;
+      ay += (targetY - t.y) * 0.18;
+
+      if (t.schoolId === 1 && followState.cooldown > 4.0 && n0 > 0) {
+        // Peel off laterally onto its own path right after the 5s follow ends
+        const perpX = -dir0y;
+        const perpY = dir0x;
+        ax += perpX * 55;
+        ay += perpY * 55;
+      }
+    }
+
+    // Avoid middle open area of the pond (radial + gentle tangential deflection so schools keep moving)
+    const mdx = t.x - width * 0.5;
+    const mdy = t.y - height * 0.5;
+    const normMid = Math.hypot(mdx / midRx, mdy / midRy);
+    if (normMid < 1.08) {
+      const mDist = Math.hypot(mdx, mdy) || 1;
+      const ux = mdx / mDist;
+      const uy = mdy / mDist;
+      const strength = (1.08 - normMid) * 165;
+      const tangDir = t.schoolId === 0 ? 1 : -1;
+      ax += ux * strength - uy * tangDir * (strength * 0.55);
+      ay += uy * strength + ux * tangDir * (strength * 0.55);
+    }
+
+    // Avoid all koi fishes (head, body, tail)
+    for (let dIdx = 0; dIdx < dangerPts.length; dIdx++) {
+      const dp = dangerPts[dIdx];
+      const dx = t.x - dp.x;
+      const dy = t.y - dp.y;
+      const d = Math.hypot(dx, dy);
+      if (d >= dp.r || d < 1e-3) continue;
+      const w = 1 - d / dp.r;
+      const force = 540 * w * w;
+      ax += (dx / d) * force;
+      ay += (dy / d) * force;
+      const fear = Math.min(1, w * 1.15);
+      if (fear > t.alarm) t.alarm = fear;
+    }
+
+    // Avoid pointer ripples
+    if (pointer.active) {
+      const dx = t.x - pointer.x;
+      const dy = t.y - pointer.y;
+      const d = Math.hypot(dx, dy);
+      if (d < 110 && d > 1e-3) {
+        const w = 1 - d / 110;
+        ax += (dx / d) * 320 * w * w;
+        ay += (dy / d) * 320 * w * w;
+        if (w * 0.75 > t.alarm) t.alarm = w * 0.75;
+      }
+    }
+
+    // Alarm decay + local contagion
+    const calmDecay = Math.exp(-dt * 1.4);
+    let alarm = t.alarm * calmDecay;
+    if (neighbourAlarm * 0.82 > alarm) {
+      alarm += (neighbourAlarm * 0.82 - alarm) * Math.min(1, dt * 7);
+    }
+    t.alarm = koiClamp(alarm, 0, 1);
+
+    // Soft pond bounds (keep tadpoles comfortably inside visible pond)
+    const pad = 30;
+    if (t.x < pad) ax += (pad - t.x) * 6.5;
+    else if (t.x > width - pad) ax -= (t.x - (width - pad)) * 6.5;
+    if (t.y < pad) ay += (pad - t.y) * 6.5;
+    else if (t.y > height - pad) ay -= (t.y - (height - pad)) * 6.5;
+
+    const cur = samplePond(time);
+    ax += cur.vx * 12;
+    ay += cur.vy * 12;
+
+    const preferred = (32 + t.schoolId * 3) * (1 + 1.85 * t.alarm);
+    ax += (preferred - speed) * hx * 2.4;
+    ay += (preferred - speed) * hy * 2.4;
+
+    t.vx += ax * dt;
+    t.vy += ay * dt;
+    const nextSpeed = Math.hypot(t.vx, t.vy);
+    const maxSpeed = 132 * (1 + 0.65 * t.alarm);
+    const minSpeed = 20;
+    if (nextSpeed > maxSpeed) {
+      t.vx *= maxSpeed / nextSpeed;
+      t.vy *= maxSpeed / nextSpeed;
+    } else if (nextSpeed < minSpeed && nextSpeed > 1e-3) {
+      t.vx *= minSpeed / nextSpeed;
+      t.vy *= minSpeed / nextSpeed;
+    }
+
+    t.phase += dt * (15 + nextSpeed * 0.28);
+    t.x = koiClamp(t.x + t.vx * dt, 10, Math.max(20, width - 10));
+    t.y = koiClamp(t.y + t.vy * dt, 10, Math.max(20, height - 10));
+  }
+}
+
+export function rescaleTadpoles(
+  tadpoles: PondTadpole[],
+  oldW: number,
+  oldH: number,
+  newW: number,
+  newH: number
+): void {
+  if (oldW <= 0 || oldH <= 0) return;
+  const sx = newW / oldW;
+  const sy = newH / oldH;
+  for (const t of tadpoles) {
+    t.x *= sx;
+    t.y *= sy;
   }
 }

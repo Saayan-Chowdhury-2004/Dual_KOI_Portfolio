@@ -1025,14 +1025,14 @@ export function bakeSumieWashBackingSprite(
 }
 
 /**
- * 4C-2. Bakes a single bigger 5-petal reserved-paper flower sprite with a crisp dark center dot
- *       so each flower can be displaced individually on pond clicks.
+ * 4C-2. Bakes a single 5-petal Sumi-e sakura flower sprite matching the reference watercolor-ink style:
+ *       soft warm-ivory / dusty-taupe notched petals with feathered ink-bleed edges and dark charcoal stamens.
  */
 export function bakeSumieSingleFlowerSprite(
   radius: number,
   isLight: boolean
 ): HTMLCanvasElement {
-  const fRad = Math.max(5, radius);
+  const fRad = Math.max(8, radius);
   const dim = Math.ceil(fRad * 2.8);
   const cx = dim * 0.5;
   const cy = dim * 0.5;
@@ -1042,31 +1042,133 @@ export function bakeSumieSingleFlowerSprite(
   const ctx = canvas.getContext("2d");
   if (!ctx) return canvas;
 
-  const petalCol = isLight ? "rgba(234, 226, 210, 0.96)" : "rgba(212, 205, 192, 0.92)";
-  const rimCol = isLight ? "rgba(58, 53, 46, 0.30)" : "rgba(24, 22, 20, 0.38)";
-  const dotCol = isLight ? "rgba(22, 20, 18, 0.94)" : "rgba(20, 18, 16, 0.94)";
+  const dimF = isLight ? 1.0 : 0.76;
+  const throatCol = `rgba(${Math.round(156 * dimF)}, ${Math.round(136 * dimF)}, ${Math.round(126 * dimF)}, 0.90)`;
+  const midCol = `rgba(${Math.round(212 * dimF)}, ${Math.round(194 * dimF)}, ${Math.round(182 * dimF)}, 0.94)`;
+  const tipCol = `rgba(${Math.round(234 * dimF)}, ${Math.round(220 * dimF)}, ${Math.round(208 * dimF)}, 0.92)`;
+  const rimCol = `rgba(${Math.round(122 * dimF)}, ${Math.round(104 * dimF)}, ${Math.round(96 * dimF)}, 0.44)`;
+  const veinCol = `rgba(${Math.round(132 * dimF)}, ${Math.round(112 * dimF)}, ${Math.round(104 * dimF)}, 0.30)`;
 
   ctx.save();
   ctx.translate(cx, cy);
+
   for (let p = 0; p < 5; p++) {
-    const pa = (p / 5) * Math.PI * 2;
+    const pa = (p / 5) * Math.PI * 2 + Math.sin(p * 2.3) * 0.04;
+    const pLen = fRad * (0.95 + ((p * 7) % 3) * 0.04);
+    const pW = fRad * 0.62;
+
     ctx.save();
     ctx.rotate(pa);
     ctx.beginPath();
-    ctx.ellipse(fRad * 0.56, 0, fRad * 0.52, fRad * 0.37, 0, 0, Math.PI * 2);
-    ctx.fillStyle = petalCol;
+    ctx.moveTo(0, 0);
+    ctx.bezierCurveTo(pLen * 0.24, -pW * 0.96, pLen * 0.76, -pW * 0.88, pLen, -pW * 0.16);
+    ctx.quadraticCurveTo(pLen * 0.90, -pW * 0.05, pLen * 0.82, 0);
+    ctx.quadraticCurveTo(pLen * 0.90, pW * 0.05, pLen, pW * 0.16);
+    ctx.bezierCurveTo(pLen * 0.76, pW * 0.88, pLen * 0.24, pW * 0.96, 0, 0);
+    ctx.closePath();
+
+    const grad = ctx.createLinearGradient(0, 0, pLen, 0);
+    grad.addColorStop(0.0, throatCol);
+    grad.addColorStop(0.45, midCol);
+    grad.addColorStop(0.88, tipCol);
+    grad.addColorStop(1.0, throatCol);
+    ctx.fillStyle = grad;
     ctx.fill();
-    ctx.lineWidth = Math.max(0.55, fRad * 0.065);
+
+    ctx.lineWidth = Math.max(0.45, fRad * 0.038);
     ctx.strokeStyle = rimCol;
+    ctx.stroke();
+
+    // Subtle central petal vein
+    ctx.beginPath();
+    ctx.moveTo(pLen * 0.18, 0);
+    ctx.quadraticCurveTo(pLen * 0.48, -pW * 0.08, pLen * 0.74, 0);
+    ctx.strokeStyle = veinCol;
+    ctx.lineWidth = Math.max(0.35, fRad * 0.026);
     ctx.stroke();
     ctx.restore();
   }
 
-  // Dark center dot + subtle tiny stamen specks
-  ctx.fillStyle = dotCol;
+  // Soft dark charcoal ink throat wash
+  const heartG = ctx.createRadialGradient(0, 0, 0, 0, 0, fRad * 0.25);
+  heartG.addColorStop(0.0, isLight ? "rgba(38, 32, 28, 0.82)" : "rgba(24, 20, 18, 0.88)");
+  heartG.addColorStop(0.55, isLight ? "rgba(96, 82, 74, 0.42)" : "rgba(68, 58, 52, 0.48)");
+  heartG.addColorStop(1.0, "rgba(96, 82, 74, 0)");
+  ctx.fillStyle = heartG;
   ctx.beginPath();
-  ctx.arc(0, 0, Math.max(1.5, fRad * 0.24), 0, Math.PI * 2);
+  ctx.arc(0, 0, fRad * 0.25, 0, Math.PI * 2);
   ctx.fill();
+
+  // 12 delicate dark ink stamens with dark ink-dot anthers
+  const stamenCount = 12;
+  ctx.strokeStyle = isLight ? "rgba(42, 34, 30, 0.84)" : "rgba(30, 24, 22, 0.88)";
+  ctx.fillStyle = isLight ? "rgba(24, 20, 18, 0.96)" : "rgba(16, 14, 12, 0.96)";
+  ctx.lineWidth = Math.max(0.40, fRad * 0.036);
+  for (let st = 0; st < stamenCount; st++) {
+    const sa = (st / stamenCount) * Math.PI * 2;
+    const sLen = fRad * (0.25 + (st % 3) * 0.055);
+    const sx = Math.cos(sa) * sLen;
+    const sy = Math.sin(sa) * sLen;
+    const cAng = sa + (st % 2 === 0 ? 0.18 : -0.18);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.quadraticCurveTo(Math.cos(cAng) * sLen * 0.54, Math.sin(cAng) * sLen * 0.54, sx, sy);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(sx, sy, Math.max(0.60, fRad * 0.048), 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+  return canvas;
+}
+
+/**
+ * 4C-3. Bakes a single Sumi-e notched sakura petal sprite in the same dusty-taupe / warm-ivory ink wash.
+ */
+export function bakeSumieSinglePetalSprite(
+  length: number,
+  isLight: boolean
+): HTMLCanvasElement {
+  const pLen = Math.max(6, length);
+  const pW = pLen * 0.58;
+  const dim = Math.ceil(pLen * 2.2);
+  const cx = dim * 0.5;
+  const cy = dim * 0.5;
+  const canvas = document.createElement("canvas");
+  canvas.width = dim;
+  canvas.height = dim;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return canvas;
+
+  const dimF = isLight ? 1.0 : 0.76;
+  const baseCol = `rgba(${Math.round(150 * dimF)}, ${Math.round(130 * dimF)}, ${Math.round(120 * dimF)}, 0.90)`;
+  const midCol = `rgba(${Math.round(210 * dimF)}, ${Math.round(192 * dimF)}, ${Math.round(180 * dimF)}, 0.94)`;
+  const tipCol = `rgba(${Math.round(234 * dimF)}, ${Math.round(220 * dimF)}, ${Math.round(208 * dimF)}, 0.92)`;
+  const rimCol = `rgba(${Math.round(116 * dimF)}, ${Math.round(98 * dimF)}, ${Math.round(90 * dimF)}, 0.48)`;
+
+  const ox = -pLen * 0.5;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.beginPath();
+  ctx.moveTo(ox, 0);
+  ctx.bezierCurveTo(ox + pLen * 0.26, -pW * 0.94, ox + pLen * 0.78, -pW * 0.86, ox + pLen, -pW * 0.16);
+  ctx.quadraticCurveTo(ox + pLen * 0.90, -pW * 0.05, ox + pLen * 0.83, 0);
+  ctx.quadraticCurveTo(ox + pLen * 0.90, pW * 0.05, ox + pLen, pW * 0.16);
+  ctx.bezierCurveTo(ox + pLen * 0.78, pW * 0.86, ox + pLen * 0.26, pW * 0.94, ox, 0);
+  ctx.closePath();
+
+  const pg = ctx.createLinearGradient(ox, 0, ox + pLen, 0);
+  pg.addColorStop(0.0, baseCol);
+  pg.addColorStop(0.55, midCol);
+  pg.addColorStop(1.0, tipCol);
+  ctx.fillStyle = pg;
+  ctx.fill();
+
+  ctx.strokeStyle = rimCol;
+  ctx.lineWidth = Math.max(0.42, pLen * 0.042);
+  ctx.stroke();
   ctx.restore();
   return canvas;
 }
