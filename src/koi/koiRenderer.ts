@@ -136,6 +136,11 @@ export class KoiPondRenderer {
   private sumieSinglePetalCache: Map<string, HTMLCanvasElement[]> = new Map();
   private sumieCornerPadCache: Map<string, HTMLCanvasElement[]> = new Map();
   private dofSakuraCache: Map<string, Array<{ near: HTMLCanvasElement; far: HTMLCanvasElement }>> = new Map();
+  private tadpoleSpriteCache: Map<
+    string,
+    { sprites: HTMLCanvasElement[][]; shadow: HTMLCanvasElement | null; anchorX: number; anchorY: number }
+  > = new Map();
+  private koiScaleSpriteCache: Map<string, HTMLCanvasElement> = new Map();
   private sumieFlowers: Array<{
     fx: number;
     fy: number;
@@ -4390,27 +4395,19 @@ export class KoiPondRenderer {
       ctx.stroke();
     }
 
-    // Soft feathered moonlit dorsal wrap fading in continuously during twilight/night
+    // Soft feathered moonlit dorsal wrap fading in continuously during twilight/night (single pass)
     if (!isSumie && koiNightFrac > 0.01) {
-      const sheenBands: Array<[number, number]> = [
-        [0.85, 0.032],
-        [0.62, 0.036],
-        [0.40, 0.036],
-        [0.22, 0.030],
-      ];
-      for (const [wFrac, aVal] of sheenBands) {
-        ctx.beginPath();
-        for (let i = 4; i < n - 2; i++) {
-          const p = spine[i];
-          if (i === 4) ctx.moveTo(p.x, p.y);
-          else ctx.lineTo(p.x, p.y);
-        }
-        ctx.strokeStyle = `rgba(180, 222, 252, ${(aVal * koiNightFrac).toFixed(4)})`;
-        ctx.lineWidth = Math.max(4, fish.maxHalfWidth * wFrac);
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-        ctx.stroke();
+      ctx.beginPath();
+      for (let i = 4; i < n - 2; i++) {
+        const p = spine[i];
+        if (i === 4) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
       }
+      ctx.strokeStyle = `rgba(180, 222, 252, ${(0.095 * koiNightFrac).toFixed(4)})`;
+      ctx.lineWidth = Math.max(4, fish.maxHalfWidth * 0.56);
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.stroke();
     }
 
     // Subtle snout lip highlight (continuous daylight blend)
@@ -4712,86 +4709,118 @@ export class KoiPondRenderer {
         const rx = scaleR * 1.16;
         const ry = scaleR * 1.06 * edgeCos;
 
-        ctx.save();
         if (!isSumie) {
-          ctx.translate(cx, cy);
-          ctx.rotate(angle);
-
+          const uBand = Math.min(2, Math.floor(Math.abs(u) * 3));
           let fillRgb = shiroRgb;
           let strokeCol = isLight ? "rgba(130, 102, 74, 0.62)" : "rgba(12, 22, 34, 0.48)";
+          let colorTag = `s${uBand}`;
 
           if (scaleDesign === 1) {
-            // Classic Kohaku: pure snow-ivory & deep crimson-vermilion Hi scales (no Sumi)
             if (layer === "hi") {
               fillRgb = kohakuHi;
               strokeCol = isLight ? "rgba(148, 24, 10, 0.58)" : "rgba(42, 12, 8, 0.48)";
+              colorTag = "kh";
             } else {
-              fillRgb = darkenRgb(kohakuShiro, 1.0 - 0.09 * Math.abs(u));
+              fillRgb = darkenRgb(kohakuShiro, 1.0 - 0.03 * uBand);
               strokeCol = isLight ? "rgba(136, 112, 86, 0.58)" : "rgba(14, 24, 38, 0.46)";
+              colorTag = `ks${uBand}`;
             }
           } else if (scaleDesign === 2) {
-            // Classic Shiro Utsuri: pure black & white scales
             if (layer === "hi" || layer === "sumi") {
               fillRgb = utsuriBlack;
               strokeCol = isLight ? "rgba(58, 56, 56, 0.54)" : "rgba(38, 42, 48, 0.44)";
+              colorTag = "ub";
             } else {
-              fillRgb = darkenRgb(utsuriWhite, 1.0 - 0.10 * Math.abs(u));
+              fillRgb = darkenRgb(utsuriWhite, 1.0 - 0.033 * uBand);
               strokeCol = isLight ? "rgba(92, 88, 82, 0.58)" : "rgba(24, 30, 38, 0.46)";
+              colorTag = `uw${uBand}`;
             }
           } else if (scaleDesign === 3) {
-            // Classic Showa Sanshoku: organic diagonal sumi-black & vermilion-red wrapping saddles on ivory
             const waveBand = Math.sin(tBody * Math.PI * 2.6 + u * 2.1 + fish.seed * 0.37);
             const isSumiWrap = layer === "sumi" || (layer === "shiro" && waveBand > 0.38);
             const isHiWrap = !isSumiWrap && (layer === "hi" || waveBand < -0.52);
             if (isSumiWrap) {
               fillRgb = blackDorsal;
               strokeCol = isLight ? "rgba(76, 74, 72, 0.56)" : "rgba(48, 52, 58, 0.44)";
+              colorTag = "bd";
             } else if (isHiWrap) {
               fillRgb = flankHi;
               strokeCol = isLight ? "rgba(144, 36, 12, 0.58)" : "rgba(46, 16, 10, 0.46)";
+              colorTag = "fh";
             } else {
-              fillRgb = darkenRgb(edgeIvory, 1.0 - 0.10 * Math.abs(u));
+              fillRgb = darkenRgb(edgeIvory, 1.0 - 0.033 * uBand);
               strokeCol = isLight ? "rgba(126, 104, 82, 0.56)" : "rgba(18, 28, 42, 0.44)";
+              colorTag = `ei${uBand}`;
             }
           } else {
-            // Classic Taisho Sanke: ivory Shiroji + vermilion Hi + lacquer Sumi scales
             if (layer === "hi") {
               fillRgb = hiRgb;
               strokeCol = isLight ? "rgba(148, 32, 6, 0.56)" : "rgba(42, 12, 8, 0.46)";
+              colorTag = "th";
             } else if (layer === "sumi") {
               fillRgb = sumiRgb;
               strokeCol = isLight ? "rgba(46, 44, 46, 0.38)" : "rgba(28, 38, 52, 0.32)";
+              colorTag = "ts";
             } else {
-              fillRgb = darkenRgb(shiroRgb, 1.0 - 0.11 * Math.abs(u));
+              fillRgb = darkenRgb(shiroRgb, 1.0 - 0.036 * uBand);
+              colorTag = `tw${uBand}`;
             }
           }
 
-          ctx.beginPath();
-          ctx.moveTo(-rx * 0.85, -ry);
-          ctx.lineTo(0, -ry);
-          ctx.ellipse(0, 0, rx, ry, 0, -Math.PI * 0.5, Math.PI * 0.5, false);
-          ctx.lineTo(-rx * 0.85, ry);
-          ctx.closePath();
+          const qDay = Math.round(koiDay * 10);
+          const sKey = `${qDay}:${isLight ? "L" : "D"}:${scaleDesign}:${colorTag}:${fillRgb[0]},${fillRgb[1]},${fillRgb[2]}`;
+          let scaleSpr = this.koiScaleSpriteCache.get(sKey);
+          if (!scaleSpr) {
+            if (this.koiScaleSpriteCache.size >= 96) this.koiScaleSpriteCache.clear();
+            const refR = 10;
+            const c = document.createElement("canvas");
+            c.width = 28;
+            c.height = 28;
+            const sgCtx = c.getContext("2d");
+            if (sgCtx) {
+              sgCtx.translate(13, 14);
+              sgCtx.lineCap = "round";
+              sgCtx.lineJoin = "round";
+              sgCtx.beginPath();
+              sgCtx.moveTo(-refR * 0.85, -refR);
+              sgCtx.lineTo(0, -refR);
+              sgCtx.ellipse(0, 0, refR, refR, 0, -Math.PI * 0.5, Math.PI * 0.5, false);
+              sgCtx.lineTo(-refR * 0.85, refR);
+              sgCtx.closePath();
 
-          const sg = ctx.createLinearGradient(-rx * 0.15, 0, rx, 0);
-          if (scaleDesign === 3 && fillRgb === blackDorsal) {
-            sg.addColorStop(0.0, rgbToRgba(darkenRgb(fillRgb, 0.82), 1.0));
-            sg.addColorStop(0.58, rgbToRgba(fillRgb, 1.0));
-            sg.addColorStop(1.0, rgbToRgba(blackDorsalRim, 1.0));
-          } else {
-            sg.addColorStop(0.0, rgbToRgba(darkenRgb(fillRgb, layer === "shiro" ? 0.90 : 0.93), 1.0));
-            sg.addColorStop(0.58, rgbToRgba(fillRgb, 1.0));
-            sg.addColorStop(1.0, rgbToRgba(darkenRgb(fillRgb, 1.04), 1.0));
+              const sg = sgCtx.createLinearGradient(-refR * 0.15, 0, refR, 0);
+              if (scaleDesign === 3 && colorTag === "bd") {
+                sg.addColorStop(0.0, rgbToRgba(darkenRgb(fillRgb, 0.82), 1.0));
+                sg.addColorStop(0.58, rgbToRgba(fillRgb, 1.0));
+                sg.addColorStop(1.0, rgbToRgba(blackDorsalRim, 1.0));
+              } else {
+                sg.addColorStop(0.0, rgbToRgba(darkenRgb(fillRgb, layer === "shiro" ? 0.90 : 0.93), 1.0));
+                sg.addColorStop(0.58, rgbToRgba(fillRgb, 1.0));
+                sg.addColorStop(1.0, rgbToRgba(darkenRgb(fillRgb, 1.04), 1.0));
+              }
+              sgCtx.fillStyle = sg;
+              sgCtx.fill();
+
+              sgCtx.beginPath();
+              sgCtx.ellipse(0, 0, refR, refR, 0, -Math.PI * 0.47, Math.PI * 0.47, false);
+              sgCtx.strokeStyle = strokeCol;
+              sgCtx.lineWidth = 0.85;
+              sgCtx.stroke();
+            }
+            scaleSpr = c;
+            this.koiScaleSpriteCache.set(sKey, scaleSpr);
           }
-          ctx.fillStyle = sg;
-          ctx.fill();
 
-          ctx.beginPath();
-          ctx.ellipse(0, 0, rx, ry, 0, -Math.PI * 0.47, Math.PI * 0.47, false);
-          ctx.strokeStyle = strokeCol;
-          ctx.lineWidth = Math.max(0.65, fish.maxHalfWidth * 0.009);
-          ctx.stroke();
+          const sx = rx / 10;
+          const sy = ry / 10;
+          const cosA = Math.cos(angle);
+          const sinA = Math.sin(angle);
+          ctx.save();
+          ctx.transform(cosA * sx, sinA * sx, -sinA * sy, cosA * sy, cx, cy);
+          ctx.drawImage(scaleSpr, -13, -14);
+          ctx.restore();
         } else {
+          ctx.save();
           // SUMI-E: Classic scale-color variations rendered as delicate brushed dry-ink crescents
           const jx = Math.sin(r * 7.3 + c * 11.1 + fish.seed) * (scaleR * 0.16);
           const jy = Math.cos(r * 5.7 + c * 13.7 + fish.seed) * (scaleR * 0.14);
@@ -4813,8 +4842,8 @@ export class KoiPondRenderer {
               : `rgba(68, 63, 56, ${(0.28 * sumieFade).toFixed(2)})`;
           ctx.fillStyle = sumieScaleCol;
           ctx.fill();
+          ctx.restore();
         }
-        ctx.restore();
       }
     }
     ctx.restore();
@@ -7635,10 +7664,19 @@ export class KoiPondRenderer {
     const offX = solar.shadowX * 0.36 * unit;
     const offY = solar.shadowY * 0.36 * unit;
     const offPad = Math.hypot(offX, offY) + 18 * unit;
+    const lBox = lower.bbox;
+    const lMinX = lBox.minX - offPad;
+    const lMaxX = lBox.maxX + offPad;
+    const lMinY = lBox.minY - offPad;
+    const lMaxY = lBox.maxY + offPad;
 
     const overlapping: KoiFish[] = [];
     for (let j = lowerIdx + 1; j < world.koi.length; j++) {
       const upper = world.koi[j];
+      const uBox = upper.bbox;
+      if (uBox.maxX < lMinX || uBox.minX > lMaxX || uBox.maxY < lMinY || uBox.minY > lMaxY) {
+        continue;
+      }
       const us = upper.spine;
       if (us.length < 10) continue;
       const uMid = us[Math.floor(us.length * 0.5)];
@@ -7649,7 +7687,7 @@ export class KoiPondRenderer {
     }
     if (overlapping.length === 0) return;
 
-    const shadowScale = 0.5;
+    const shadowScale = 0.25;
     const w = Math.max(64, Math.round(worldW * shadowScale));
     const h = Math.max(64, Math.round(worldH * shadowScale));
     const shCanvas = this.koiShadowWorkCanvas ?? document.createElement("canvas");
@@ -7684,7 +7722,7 @@ export class KoiPondRenderer {
 
     bCtx.clearRect(0, 0, w, h);
     bCtx.save();
-    bCtx.filter = `blur(${Math.max(4, Math.round(7.0 * solar.shadowBlurScale * unit))}px)`;
+    bCtx.filter = `blur(${Math.max(2, Math.round(3.5 * solar.shadowBlurScale * unit))}px)`;
     bCtx.drawImage(shCanvas, 0, 0);
     bCtx.filter = "none";
     bCtx.restore();
@@ -9860,19 +9898,21 @@ export class KoiPondRenderer {
       let fx = 0;
       let fy = 0;
 
-      // A. Very calm surface-tension neighbor cohesion (pulls nearby Sakura anywhere in the pond together slowly)
+      // A. Very calm surface-tension neighbor cohesion (squared-distance early-out avoids ~13k sqrt/frame)
       let cohX = 0;
       let cohY = 0;
       let cohCount = 0;
       const cohRange = 115 * unit;
+      const cohRange2 = cohRange * cohRange;
       for (let j = 0; j < n; j++) {
         if (i === j) continue;
         const q = particles[j];
         const dx = q.x - p.x;
         const dy = q.y - p.y;
-        const dist = Math.hypot(dx, dy);
+        const d2 = dx * dx + dy * dy;
+        if (d2 >= cohRange2) continue;
         const minTouch = colRad[i] + colRad[j] + 2.5 * unit;
-        if (dist > minTouch && dist < cohRange) {
+        if (d2 > minTouch * minTouch) {
           cohX += q.x;
           cohY += q.y;
           cohCount++;
@@ -9926,14 +9966,12 @@ export class KoiPondRenderer {
       p.y += p.vy * dt * 8.5;
     }
 
-    // 2. 8-Pass Unified Rigid Circle Separation Solver across ALL Floating Surface Elements:
-    //    - All 9 Lotus Pads & Blooming Lotuses
-    //    - All 6 Live Floating Maple Leaves
-    //    - All 116 Floating Sakura Flowers & Petals
+    // 2. 3-Pass Rigid Circle Separation Solver with squared-distance early-out
     const resolvedPads = this.getResolvedLotusPads(worldW, worldH, unit);
     const liveMaples = this.getLiveMapleLeafPositions(worldW, worldH, unit, time);
+    const padSepPad = 4.5 * unit;
 
-    for (let pass = 0; pass < 8; pass++) {
+    for (let pass = 0; pass < 3; pass++) {
       // A. Separate Sakura particles from one another
       for (let i = 0; i < n; i++) {
         const a = particles[i];
@@ -9943,9 +9981,10 @@ export class KoiPondRenderer {
           const rB = colRad[j];
           const dx = b.x - a.x;
           const dy = b.y - a.y;
-          const dist = Math.hypot(dx, dy);
           const minSep = rA + rB + 2.2 * unit;
-          if (dist < minSep) {
+          const d2 = dx * dx + dy * dy;
+          if (d2 < minSep * minSep) {
+            const dist = Math.sqrt(d2);
             const ux = dist > 0.001 ? dx / dist : Math.cos(i * 1.7 + j);
             const uy = dist > 0.001 ? dy / dist : Math.sin(i * 1.7 + j);
             const overlap = minSep - dist;
@@ -12339,8 +12378,223 @@ export class KoiPondRenderer {
   }
 
   /**
-   * Renders both dynamic schools of tadpoles (1 large school, 1 small school) with
-   * plump oval bodies, tiny eyes, undulating S-wave tails, and subtle cast shadows.
+   * Pre-bakes 3 color variants × 12 tail-phase frames of tadpole sprites (plus a shadow oval for Mokkotsu)
+   * per `(quantUnit, isLight, style)` so `paintTadpoles` blits sprites with zero per-frame polyline/path cost.
+   */
+  private ensureTadpoleSprites(
+    unit: number,
+    isLight: boolean,
+    style: KoiArtStyle
+  ): { sprites: HTMLCanvasElement[][]; shadow: HTMLCanvasElement | null; anchorX: number; anchorY: number } {
+    const quantUnit = Math.round(unit * 20) / 20;
+    const key = `${quantUnit}:${isLight ? "L" : "D"}:${style}:tadpole-v1`;
+    const cached = this.tadpoleSpriteCache.get(key);
+    if (cached) return cached;
+    if (this.tadpoleSpriteCache.size >= 8) this.tadpoleSpriteCache.clear();
+
+    const isSumie = style === "sumie";
+    const refSc = quantUnit * 0.5;
+    const phaseCount = 12;
+    const pad = Math.ceil(6 * quantUnit);
+    const tailLen = (isSumie ? 19.0 : 16.5) * refSc;
+    const headRx = (isSumie ? 6.0 : 5.6) * refSc;
+    const headRy = (isSumie ? 3.7 : 3.25) * refSc;
+    const cw = Math.max(24, Math.ceil(headRx * 2.2 + tailLen + pad * 2));
+    const ch = Math.max(16, Math.ceil(headRy * 4.6 + pad * 2));
+    const anchorX = Math.round(cw - pad - headRx * 1.15);
+    const anchorY = Math.round(ch * 0.5);
+
+    const palettes = isSumie
+      ? [
+          { body: isLight ? [26, 24, 22] : [112, 108, 100], tail: isLight ? [46, 42, 38] : [144, 138, 128] },
+          { body: isLight ? [38, 35, 31] : [96, 92, 86], tail: isLight ? [58, 53, 48] : [128, 122, 114] },
+          { body: isLight ? [20, 19, 17] : [124, 120, 112], tail: isLight ? [38, 35, 32] : [154, 148, 140] },
+        ]
+      : [
+          { body: isLight ? [44, 46, 28] : [62, 70, 54], rim: isLight ? [108, 112, 72] : [112, 124, 98], tail: isLight ? [86, 90, 58] : [98, 110, 84] },
+          { body: isLight ? [78, 50, 32] : [86, 62, 46], rim: isLight ? [134, 96, 66] : [138, 106, 82], tail: isLight ? [112, 78, 52] : [120, 90, 68] },
+          { body: isLight ? [42, 62, 28] : [56, 78, 46], rim: isLight ? [96, 120, 62] : [106, 134, 86], tail: isLight ? [76, 98, 48] : [88, 116, 70] },
+        ];
+    const eyeCol: [number, number, number] = isSumie
+      ? isLight
+        ? [8, 7, 6]
+        : [20, 18, 16]
+      : isLight
+        ? [14, 14, 8]
+        : [14, 16, 12];
+
+    const sprites: HTMLCanvasElement[][] = [];
+    for (let v = 0; v < 3; v++) {
+      const row: HTMLCanvasElement[] = [];
+      const pal = palettes[v] as { body: [number, number, number]; rim?: [number, number, number]; tail: [number, number, number] };
+      const seed = (v + 1) * 13.7;
+      for (let pIdx = 0; pIdx < phaseCount; pIdx++) {
+        const phase = (pIdx / phaseCount) * Math.PI * 2;
+        const c = document.createElement("canvas");
+        c.width = cw;
+        c.height = ch;
+        const g = c.getContext("2d");
+        if (!g) {
+          row.push(c);
+          continue;
+        }
+        g.save();
+        g.translate(anchorX, anchorY);
+        g.lineCap = "round";
+
+        const wagAmp = 3.6 * refSc;
+        const w1 = Math.sin(phase) * wagAmp * 0.65;
+        const wMid = Math.sin(phase - 1.15) * wagAmp * 0.95;
+        const w3 = Math.sin(phase - 2.35) * wagAmp * 1.25;
+        const wTip = Math.sin(phase - 3.35) * wagAmp * 1.45;
+
+        if (isSumie) {
+          const baseX = -headRx * 0.62;
+          const midX = baseX - tailLen * 0.46;
+          const tipX = baseX - tailLen;
+
+          const headPts: Array<{ x: number; y: number }> = [];
+          const segs = 14;
+          for (let k = 0; k < segs; k++) {
+            const theta = (k / segs) * Math.PI * 2;
+            const wobble = 1.0 + 0.11 * Math.sin(theta * 3 + seed) + 0.07 * Math.cos(theta * 5 - seed * 0.7);
+            headPts.push({
+              x: Math.cos(theta) * headRx * wobble,
+              y: Math.sin(theta) * headRy * wobble,
+            });
+          }
+
+          const tailPtsTop = [
+            { x: baseX, y: -headRy * 0.54 },
+            { x: baseX - tailLen * 0.25, y: w1 - headRy * 0.38 },
+            { x: midX, y: wMid - headRy * 0.24 },
+            { x: baseX - tailLen * 0.75, y: w3 - headRy * 0.11 },
+            { x: tipX, y: wTip },
+          ];
+          const tailPtsBot = [
+            { x: tipX, y: wTip },
+            { x: baseX - tailLen * 0.75, y: w3 + headRy * 0.11 },
+            { x: midX, y: wMid + headRy * 0.24 },
+            { x: baseX - tailLen * 0.25, y: w1 + headRy * 0.38 },
+            { x: baseX, y: headRy * 0.54 },
+          ];
+
+          g.fillStyle = rgbToRgba(pal.tail, 0.78);
+          g.beginPath();
+          g.moveTo(tailPtsTop[0].x, tailPtsTop[0].y);
+          for (let k = 1; k < tailPtsTop.length; k++) g.lineTo(tailPtsTop[k].x, tailPtsTop[k].y);
+          for (let k = 1; k < tailPtsBot.length; k++) g.lineTo(tailPtsBot[k].x, tailPtsBot[k].y);
+          g.closePath();
+          g.fill();
+
+          const flatHeadCol: [number, number, number] = isLight
+            ? v === 1
+              ? [196, 186, 170]
+              : [82, 76, 68]
+            : [148, 142, 132];
+          const flatPatchCol: [number, number, number] = isLight ? [26, 24, 21] : [64, 60, 54];
+
+          g.fillStyle = rgbToRgba(flatHeadCol, 0.96);
+          g.beginPath();
+          g.moveTo(headPts[0].x, headPts[0].y);
+          for (let k = 1; k < headPts.length; k++) g.lineTo(headPts[k].x, headPts[k].y);
+          g.closePath();
+          g.fill();
+
+          g.fillStyle = rgbToRgba(flatPatchCol, 0.90);
+          g.beginPath();
+          for (let k = 0; k < 8; k++) {
+            const theta = (k / 8) * Math.PI * 2;
+            const rw = 1.0 + 0.24 * Math.sin(theta * 3 + seed * 1.3);
+            const px = -headRx * 0.10 + Math.cos(theta) * headRx * 0.58 * rw;
+            const py = -headRy * 0.08 + Math.sin(theta) * headRy * 0.56 * rw;
+            if (k === 0) g.moveTo(px, py);
+            else g.lineTo(px, py);
+          }
+          g.closePath();
+          g.fill();
+
+          const outlineRgb: [number, number, number] = isLight ? [20, 18, 16] : [214, 208, 196];
+          const closedHead = [...headPts, headPts[0]];
+          this.strokeCalligraphicPolyline(g, closedHead, Math.max(0.36, 0.46 * refSc), outlineRgb, 0.68, seed * 0.17, false);
+          this.strokeCalligraphicPolyline(g, tailPtsTop, Math.max(0.26, 0.34 * refSc), outlineRgb, 0.58, seed * 0.23, false);
+          this.strokeCalligraphicPolyline(g, tailPtsBot, Math.max(0.24, 0.30 * refSc), outlineRgb, 0.50, seed * 0.31, false);
+
+          g.fillStyle = rgbToRgba(eyeCol, 0.98);
+          const sEyeR = Math.max(0.55, 0.84 * refSc);
+          g.beginPath();
+          g.arc(headRx * 0.44, -headRy * 0.52, sEyeR, 0, Math.PI * 2);
+          g.arc(headRx * 0.44, headRy * 0.52, sEyeR, 0, Math.PI * 2);
+          g.fill();
+        } else {
+          const baseX = -headRx * 0.62;
+          const midX = baseX - tailLen * 0.48;
+          const tipX = baseX - tailLen;
+          const baseHalfW = headRy * 0.64;
+
+          g.fillStyle = rgbToRgba(pal.tail, 0.84);
+          g.beginPath();
+          g.moveTo(baseX, -baseHalfW);
+          g.quadraticCurveTo(midX, wMid - baseHalfW * 0.42, tipX, wTip);
+          g.quadraticCurveTo(midX, wMid + baseHalfW * 0.42, baseX, baseHalfW);
+          g.closePath();
+          g.fill();
+
+          g.strokeStyle = rgbToRgba(pal.body, 0.72);
+          g.lineWidth = Math.max(0.55, 0.95 * refSc);
+          g.beginPath();
+          g.moveTo(baseX, 0);
+          g.quadraticCurveTo(midX, wMid, tipX + 1.2 * refSc, wTip);
+          g.stroke();
+
+          g.fillStyle = rgbToRgba(pal.body, 1.0);
+          g.beginPath();
+          g.ellipse(0, 0, headRx, headRy, 0, 0, Math.PI * 2);
+          g.fill();
+
+          g.fillStyle = rgbToRgba(pal.rim!, 0.48);
+          g.beginPath();
+          g.ellipse(headRx * 0.12, -headRy * 0.22, headRx * 0.56, headRy * 0.36, 0, 0, Math.PI * 2);
+          g.fill();
+
+          g.fillStyle = rgbToRgba(eyeCol, 0.95);
+          const eyeR = Math.max(0.45, 0.72 * refSc);
+          g.beginPath();
+          g.arc(headRx * 0.46, -headRy * 0.46, eyeR, 0, Math.PI * 2);
+          g.arc(headRx * 0.46, headRy * 0.46, eyeR, 0, Math.PI * 2);
+          g.fill();
+        }
+
+        g.restore();
+        row.push(c);
+      }
+      sprites.push(row);
+    }
+
+    let shadow: HTMLCanvasElement | null = null;
+    if (!isSumie) {
+      const shW = Math.max(12, Math.ceil(headRx * 2.4));
+      const shH = Math.max(8, Math.ceil(headRy * 2.4));
+      shadow = document.createElement("canvas");
+      shadow.width = shW;
+      shadow.height = shH;
+      const sg = shadow.getContext("2d");
+      if (sg) {
+        const shRgb = isLight ? [18, 14, 8] : [0, 0, 0];
+        sg.fillStyle = rgbToRgba(shRgb as [number, number, number], isLight ? 0.20 : 0.28);
+        sg.beginPath();
+        sg.ellipse(shW * 0.5, shH * 0.5, headRx * 0.95, headRy * 0.92, 0, 0, Math.PI * 2);
+        sg.fill();
+      }
+    }
+
+    const bundle = { sprites, shadow, anchorX, anchorY };
+    this.tadpoleSpriteCache.set(key, bundle);
+    return bundle;
+  }
+
+  /**
+   * Renders all 3 dynamic schools of tadpoles by blitting pre-baked phase/variant sprites.
    */
   private paintTadpoles(
     ctx: CanvasRenderingContext2D,
@@ -12355,68 +12609,21 @@ export class KoiPondRenderer {
     const unit = koiClamp(Math.min(worldW, worldH) / 860, 0.48, 1.22);
     const solar = this.getSolarLightingState();
     const daylight = solar.daylight;
-    const isSumie = style === "sumie";
+    const isLight = daylight >= 0.5;
+    const bundle = this.ensureTadpoleSprites(unit, isLight, style);
+    const quantUnit = Math.round(unit * 20) / 20;
+    const refSc = quantUnit * 0.5;
 
     const shX = solar.shadowX * 0.42 * unit;
     const shY = solar.shadowY * 0.42 * unit;
-    const shRgb = mixRgb([0, 0, 0], [18, 14, 8], daylight);
-
     const flashActive = daylight < 0.85 && this.flashlightDispersal < 0.98;
     const flashRadius = this.getFlashlightBaseRadius(worldW, worldH) * 0.95;
 
-    const palettes = isSumie
-      ? [
-          {
-            body: mixRgb([112, 108, 100], [26, 24, 22], daylight),
-            rim: mixRgb([164, 158, 148], [62, 58, 52], daylight),
-            tail: mixRgb([144, 138, 128], [46, 42, 38], daylight),
-          },
-          {
-            body: mixRgb([96, 92, 86], [38, 35, 31], daylight),
-            rim: mixRgb([148, 142, 132], [74, 68, 62], daylight),
-            tail: mixRgb([128, 122, 114], [58, 53, 48], daylight),
-          },
-          {
-            body: mixRgb([124, 120, 112], [20, 19, 17], daylight),
-            rim: mixRgb([176, 170, 160], [52, 48, 44], daylight),
-            tail: mixRgb([154, 148, 140], [38, 35, 32], daylight),
-          },
-        ]
-      : [
-          // 0: Charcoal-olive
-          {
-            body: mixRgb([62, 70, 54], [44, 46, 28], daylight),
-            rim: mixRgb([112, 124, 98], [108, 112, 72], daylight),
-            tail: mixRgb([98, 110, 84], [86, 90, 58], daylight),
-          },
-          // 1: Warm brown
-          {
-            body: mixRgb([86, 62, 46], [78, 50, 32], daylight),
-            rim: mixRgb([138, 106, 82], [134, 96, 66], daylight),
-            tail: mixRgb([120, 90, 68], [112, 78, 52], daylight),
-          },
-          // 2: Dark olive green
-          {
-            body: mixRgb([56, 78, 46], [42, 62, 28], daylight),
-            rim: mixRgb([106, 134, 86], [96, 120, 62], daylight),
-            tail: mixRgb([88, 116, 70], [76, 98, 48], daylight),
-          },
-        ];
-    const eyeCol = isSumie
-      ? mixRgb([20, 18, 16], [8, 7, 6], daylight)
-      : mixRgb([14, 16, 12], [14, 14, 8], daylight);
-
     ctx.save();
-    ctx.lineCap = "round";
-
     for (let i = 0; i < tadpoles.length; i++) {
       const tp = tadpoles[i];
-      const pal = palettes[tp.colorVariant ?? 0];
-      const sc = unit * tp.size;
-      const headRx = 5.6 * sc;
-      const headRy = 3.25 * sc;
-      const tailLen = 16.5 * sc;
       const ang = Math.atan2(tp.vy, tp.vx);
+      const relScale = (unit * tp.size) / Math.max(0.05, refSc);
 
       let alpha = koiClamp(tp.depth * koiLerp(0.76, 0.92, daylight), 0.35, 0.96);
       if (flashActive) {
@@ -12426,167 +12633,27 @@ export class KoiPondRenderer {
         }
       }
 
-      const wagAmp = (3.4 + tp.alarm * 2.2) * sc;
-      const w1 = Math.sin(tp.phase) * wagAmp * 0.65;
-      const wMid = Math.sin(tp.phase - 1.15) * wagAmp * 0.95;
-      const w3 = Math.sin(tp.phase - 2.35) * wagAmp * 1.25;
-      const wTip = Math.sin(tp.phase - 3.35) * wagAmp * 1.45;
-      const tailBaseX = -headRx * 0.62;
-      const tailMidX = tailBaseX - tailLen * 0.48;
-      const tailTipX = tailBaseX - tailLen;
-      const baseHalfW = headRy * 0.64;
+      const normPhase = ((tp.phase % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+      const pIdx = Math.floor((normPhase / (Math.PI * 2)) * 12) % 12;
+      const spr = bundle.sprites[tp.colorVariant ?? 0][pIdx];
 
-      // Subtle cast shadow (Mokkotsu only; omitted in Sumi-e)
-      if (!isSumie) {
+      ctx.globalAlpha = alpha;
+      if (bundle.shadow) {
+        const scX = Math.cos(ang) * relScale;
+        const scY = Math.sin(ang) * relScale;
         ctx.save();
-        ctx.translate(tp.x + shX, tp.y + shY);
-        ctx.rotate(ang);
-        ctx.fillStyle = rgbToRgba(shRgb, alpha * koiLerp(0.28, 0.20, daylight));
-        ctx.beginPath();
-        ctx.ellipse(0, 0, headRx * 0.95, headRy * 0.92, 0, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.transform(scX, scY, -scY, scX, tp.x + shX, tp.y + shY);
+        ctx.drawImage(bundle.shadow, -bundle.shadow.width * 0.5, -bundle.shadow.height * 0.5);
         ctx.restore();
       }
 
-      // Tadpole body + tail
+      const cosA = Math.cos(ang) * relScale;
+      const sinA = Math.sin(ang) * relScale;
       ctx.save();
-      ctx.translate(tp.x, tp.y);
-      ctx.rotate(ang);
-
-      if (isSumie) {
-        // Flat 2-D Sumi-e tadpole inspired by Sumi-e koi: irregular calligraphic ink boundaries,
-        // flat 2-D monochrome wash body + organic ink blotch, no 3D shading or concentric ripples.
-        const sumiHeadRx = 6.0 * sc;
-        const sumiHeadRy = 3.7 * sc;
-        const sumiTailLen = 19.0 * sc;
-        const sumiBaseX = -sumiHeadRx * 0.62;
-        const sumiMidX = sumiBaseX - sumiTailLen * 0.46;
-        const sumiTipX = sumiBaseX - sumiTailLen;
-
-        // Build irregular organic 2-D head perimeter (perturbed by tp.seed so boundaries look hand-brushed)
-        const headPts: Array<{ x: number; y: number }> = [];
-        const segs = 14;
-        for (let k = 0; k < segs; k++) {
-          const theta = (k / segs) * Math.PI * 2;
-          const wobble = 1.0 + 0.11 * Math.sin(theta * 3 + tp.seed) + 0.07 * Math.cos(theta * 5 - tp.seed * 0.7);
-          headPts.push({
-            x: Math.cos(theta) * sumiHeadRx * wobble,
-            y: Math.sin(theta) * sumiHeadRy * wobble,
-          });
-        }
-
-        // Flat 2-D tail silhouette (lively S-wave wriggle with irregular calligraphic edge)
-        const tailPtsTop: Array<{ x: number; y: number }> = [
-          { x: sumiBaseX, y: -sumiHeadRy * 0.54 },
-          { x: sumiBaseX - sumiTailLen * 0.25, y: w1 - sumiHeadRy * 0.38 },
-          { x: sumiMidX, y: wMid - sumiHeadRy * 0.24 },
-          { x: sumiBaseX - sumiTailLen * 0.75, y: w3 - sumiHeadRy * 0.11 },
-          { x: sumiTipX, y: wTip },
-        ];
-        const tailPtsBot: Array<{ x: number; y: number }> = [
-          { x: sumiTipX, y: wTip },
-          { x: sumiBaseX - sumiTailLen * 0.75, y: w3 + sumiHeadRy * 0.11 },
-          { x: sumiMidX, y: wMid + sumiHeadRy * 0.24 },
-          { x: sumiBaseX - sumiTailLen * 0.25, y: w1 + sumiHeadRy * 0.38 },
-          { x: sumiBaseX, y: sumiHeadRy * 0.54 },
-        ];
-
-        // 1. Flat 2-D ink wash tail fill
-        ctx.fillStyle = rgbToRgba(pal.tail, alpha * 0.78);
-        ctx.beginPath();
-        ctx.moveTo(tailPtsTop[0].x, tailPtsTop[0].y);
-        for (let k = 1; k < tailPtsTop.length; k++) ctx.lineTo(tailPtsTop[k].x, tailPtsTop[k].y);
-        for (let k = 1; k < tailPtsBot.length; k++) ctx.lineTo(tailPtsBot[k].x, tailPtsBot[k].y);
-        ctx.closePath();
-        ctx.fill();
-
-        // 2. Flat 2-D head fill + flat 2-D irregular dorsal ink patch (like Sumi-e koi)
-        const flatHeadCol: [number, number, number] =
-          daylight > 0.5
-            ? tp.colorVariant === 1
-              ? [196, 186, 170]
-              : [82, 76, 68]
-            : [148, 142, 132];
-        const flatPatchCol: [number, number, number] =
-          daylight > 0.5 ? [26, 24, 21] : [64, 60, 54];
-
-        ctx.fillStyle = rgbToRgba(flatHeadCol, alpha * 0.96);
-        ctx.beginPath();
-        ctx.moveTo(headPts[0].x, headPts[0].y);
-        for (let k = 1; k < headPts.length; k++) ctx.lineTo(headPts[k].x, headPts[k].y);
-        ctx.closePath();
-        ctx.fill();
-
-        // Irregular 2-D ink blotch inside head
-        ctx.fillStyle = rgbToRgba(flatPatchCol, alpha * 0.90);
-        ctx.beginPath();
-        for (let k = 0; k < 8; k++) {
-          const theta = (k / 8) * Math.PI * 2;
-          const rw = 1.0 + 0.24 * Math.sin(theta * 3 + tp.seed * 1.3);
-          const px = -sumiHeadRx * 0.10 + Math.cos(theta) * sumiHeadRx * 0.58 * rw;
-          const py = -sumiHeadRy * 0.08 + Math.sin(theta) * sumiHeadRy * 0.56 * rw;
-          if (k === 0) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
-        }
-        ctx.closePath();
-        ctx.fill();
-
-        // 3. Thinned irregular broken calligraphic ink outlines (matching Sumi-e koi contours)
-        const outlineRgb: [number, number, number] = daylight > 0.5 ? [20, 18, 16] : [214, 208, 196];
-        const closedHead = [...headPts, headPts[0]];
-        this.strokeCalligraphicPolyline(ctx, closedHead, Math.max(0.36, 0.46 * sc), outlineRgb, alpha * 0.68, tp.seed * 0.17, false);
-        this.strokeCalligraphicPolyline(ctx, tailPtsTop, Math.max(0.26, 0.34 * sc), outlineRgb, alpha * 0.58, tp.seed * 0.23, false);
-        this.strokeCalligraphicPolyline(ctx, tailPtsBot, Math.max(0.24, 0.30 * sc), outlineRgb, alpha * 0.50, tp.seed * 0.31, false);
-
-        // 4. Flat 2-D ink eyes
-        ctx.fillStyle = rgbToRgba(eyeCol, alpha * 0.98);
-        const sEyeR = Math.max(0.65, 0.84 * sc);
-        ctx.beginPath();
-        ctx.arc(sumiHeadRx * 0.44, -sumiHeadRy * 0.52, sEyeR, 0, Math.PI * 2);
-        ctx.arc(sumiHeadRx * 0.44, sumiHeadRy * 0.52, sEyeR, 0, Math.PI * 2);
-        ctx.fill();
-      } else {
-        // Filled triangular tail fin tapering smoothly to a pointed tip
-        ctx.fillStyle = rgbToRgba(pal.tail, alpha * 0.84);
-        ctx.beginPath();
-        ctx.moveTo(tailBaseX, -baseHalfW);
-        ctx.quadraticCurveTo(tailMidX, wMid - baseHalfW * 0.42, tailTipX, wTip);
-        ctx.quadraticCurveTo(tailMidX, wMid + baseHalfW * 0.42, tailBaseX, baseHalfW);
-        ctx.closePath();
-        ctx.fill();
-
-        // Central tail spine highlight for crisp visibility
-        ctx.strokeStyle = rgbToRgba(pal.body, alpha * 0.72);
-        ctx.lineWidth = Math.max(0.65, 0.95 * sc);
-        ctx.beginPath();
-        ctx.moveTo(tailBaseX, 0);
-        ctx.quadraticCurveTo(tailMidX, wMid, tailTipX + 1.2 * sc, wTip);
-        ctx.stroke();
-
-        // Plump teardrop head/body
-        ctx.fillStyle = rgbToRgba(pal.body, alpha);
-        ctx.beginPath();
-        ctx.ellipse(0, 0, headRx, headRy, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Subtle translucent rim highlight
-        ctx.fillStyle = rgbToRgba(pal.rim, alpha * 0.48);
-        ctx.beginPath();
-        ctx.ellipse(headRx * 0.12, -headRy * 0.22, headRx * 0.56, headRy * 0.36, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Tiny eyes
-        ctx.fillStyle = rgbToRgba(eyeCol, alpha * 0.95);
-        const eyeR = Math.max(0.55, 0.72 * sc);
-        ctx.beginPath();
-        ctx.arc(headRx * 0.46, -headRy * 0.46, eyeR, 0, Math.PI * 2);
-        ctx.arc(headRx * 0.46, headRy * 0.46, eyeR, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
+      ctx.transform(cosA, sinA, -sinA, cosA, tp.x, tp.y);
+      ctx.drawImage(spr, -bundle.anchorX, -bundle.anchorY);
       ctx.restore();
     }
-
     ctx.restore();
   }
 
