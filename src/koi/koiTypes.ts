@@ -306,8 +306,8 @@ export interface PondTadpole {
   y: number;
   vx: number;
   vy: number;
-  /** School index: 0 = large school, 1 = small school. */
-  schoolId: 0 | 1;
+  /** School index: 0 = large school, 1 = medium-small school, 2 = smallest school. */
+  schoolId: 0 | 1 | 2;
   /** Individual body scale factor (~0.78..1.18). */
   size: number;
   /** 0 = dark charcoal-olive, 1 = warm brown, 2 = dark olive green. */

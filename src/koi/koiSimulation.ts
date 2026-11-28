@@ -1346,16 +1346,17 @@ const LOTUS_SANCTUARY_FRACS: ReadonlyArray<readonly [number, number]> = [
  * with diverse charcoal, brown, and dark olive-green coloration.
  */
 export function seedTadpoles(width: number, height: number): PondTadpole[] {
-  const schools: Array<{ id: 0 | 1; count: number; cxFrac: number; cyFrac: number; sizeMin: number; sizeMax: number }> = [
-    { id: 0, count: 30, cxFrac: 0.25, cyFrac: 0.26, sizeMin: 0.90, sizeMax: 1.18 },
-    { id: 1, count: 12, cxFrac: 0.72, cyFrac: 0.71, sizeMin: 0.78, sizeMax: 1.02 },
+  const schools: Array<{ id: 0 | 1 | 2; count: number; cxFrac: number; cyFrac: number; sizeMin: number; sizeMax: number }> = [
+    { id: 0, count: 120, cxFrac: 0.25, cyFrac: 0.26, sizeMin: 0.45, sizeMax: 0.59 },
+    { id: 1, count: 48, cxFrac: 0.72, cyFrac: 0.71, sizeMin: 0.39, sizeMax: 0.51 },
+    { id: 2, count: 16, cxFrac: 0.41, cyFrac: 0.14, sizeMin: 0.32, sizeMax: 0.43 },
   ];
   const tadpoles: PondTadpole[] = [];
 
   for (const sc of schools) {
     const cx = width * sc.cxFrac;
     const cy = height * sc.cyFrac;
-    const spread = Math.sqrt(sc.count) * 13;
+    const spread = Math.sqrt(sc.count) * 5.8;
     const dir = Math.random() * KOI_TAU;
     for (let i = 0; i < sc.count; i++) {
       const a = Math.random() * KOI_TAU;
@@ -1382,9 +1383,9 @@ export function seedTadpoles(width: number, height: number): PondTadpole[] {
 }
 
 /**
- * Steps both dynamic tadpole schools:
+ * Steps all 3 dynamic tadpole schools:
  * - Avoids the central open pond and patrols continuously under/between the lotus leaves without halting
- * - Prevents criss-crossing: when the two schools meet, the smaller school follows the larger for 5s, then peels off
+ * - Prevents criss-crossing: when a smaller school meets the largest school, it follows for 5s, then peels off
  * - Evades all koi fishes (head, mid-body, and tail spine nodes) and pointer ripples
  */
 export function stepTadpoles(
@@ -1395,75 +1396,79 @@ export function stepTadpoles(
   height: number,
   time: number,
   dt: number,
-  followState: { followTimer: number; cooldown: number } = { followTimer: 0, cooldown: 0 }
+  followState: { followTimers: [number, number]; cooldowns: [number, number] } = {
+    followTimers: [0, 0],
+    cooldowns: [0, 0],
+  }
 ): void {
   const n = tadpoles.length;
   if (n === 0) return;
 
-  const neighborR = 86;
+  const neighborR = 54;
   const neighborR2 = neighborR * neighborR;
-  const sepR = 20;
+  const sepR = 8;
   const sepR2 = sepR * sepR;
-  const crossSepR = 28;
+  const crossSepR = 13;
   const crossSepR2 = crossSepR * crossSepR;
 
-  // Compute school centroids and mean velocities for non-intersecting / 5s follow behavior
-  let c0x = 0, c0y = 0, v0x = 0, v0y = 0, n0 = 0;
-  let c1x = 0, c1y = 0, v1x = 0, v1y = 0, n1 = 0;
+  // Compute centroids & mean velocities for schools 0, 1, 2
+  const centX = [0, 0, 0];
+  const centY = [0, 0, 0];
+  const meanVx = [0, 0, 0];
+  const meanVy = [0, 0, 0];
+  const counts = [0, 0, 0];
   for (let i = 0; i < n; i++) {
     const t = tadpoles[i];
-    if (t.schoolId === 0) {
-      c0x += t.x; c0y += t.y; v0x += t.vx; v0y += t.vy; n0++;
-    } else {
-      c1x += t.x; c1y += t.y; v1x += t.vx; v1y += t.vy; n1++;
+    const sid = t.schoolId;
+    centX[sid] += t.x;
+    centY[sid] += t.y;
+    meanVx[sid] += t.vx;
+    meanVy[sid] += t.vy;
+    counts[sid]++;
+  }
+  for (let sIdx = 0; sIdx < 3; sIdx++) {
+    if (counts[sIdx] > 0) {
+      centX[sIdx] /= counts[sIdx];
+      centY[sIdx] /= counts[sIdx];
+      meanVx[sIdx] /= counts[sIdx];
+      meanVy[sIdx] /= counts[sIdx];
     }
   }
-  if (n0 > 0) { c0x /= n0; c0y /= n0; v0x /= n0; v0y /= n0; }
-  if (n1 > 0) { c1x /= n1; c1y /= n1; v1x /= n1; v1y /= n1; }
 
-  if (followState.cooldown > 0) {
-    followState.cooldown = Math.max(0, followState.cooldown - dt);
-  }
-  if (followState.followTimer > 0) {
-    followState.followTimer = Math.max(0, followState.followTimer - dt);
-    if (followState.followTimer === 0) {
-      followState.cooldown = 6.5;
+  for (let idx = 0; idx < 2; idx++) {
+    const sId = idx + 1;
+    if (followState.cooldowns[idx] > 0) {
+      followState.cooldowns[idx] = Math.max(0, followState.cooldowns[idx] - dt);
     }
-  } else if (followState.cooldown <= 0 && n0 > 0 && n1 > 0) {
-    const centDist = Math.hypot(c1x - c0x, c1y - c0y);
-    let closeMeet = centDist < 155;
-    if (!closeMeet && centDist < 260) {
-      for (let i = 0; i < n && !closeMeet; i++) {
-        if (tadpoles[i].schoolId !== 1) continue;
-        for (let j = 0; j < n; j++) {
-          if (tadpoles[j].schoolId !== 0) continue;
-          const dx = tadpoles[i].x - tadpoles[j].x;
-          const dy = tadpoles[i].y - tadpoles[j].y;
-          if (dx * dx + dy * dy < 60 * 60) {
-            closeMeet = true;
-            break;
-          }
-        }
+    if (followState.followTimers[idx] > 0) {
+      followState.followTimers[idx] = Math.max(0, followState.followTimers[idx] - dt);
+      if (followState.followTimers[idx] === 0) {
+        followState.cooldowns[idx] = 6.5;
+      }
+    } else if (followState.cooldowns[idx] <= 0 && counts[0] > 0 && counts[sId] > 0) {
+      const centDist = Math.hypot(centX[sId] - centX[0], centY[sId] - centY[0]);
+      if (centDist < 145) {
+        followState.followTimers[idx] = 5.0;
       }
     }
-    if (closeMeet) {
-      followState.followTimer = 5.0;
-    }
   }
-  const isFollowing = followState.followTimer > 0 && n0 > 0;
-  const v0Spd = Math.hypot(v0x, v0y) || 1;
-  const dir0x = v0x / v0Spd;
-  const dir0y = v0y / v0Spd;
 
-  // Pick continuously moving lotus-leaf patrol waypoints for each school (never halting)
-  const padIdx0 = Math.floor(time * 0.24) % LOTUS_SANCTUARY_FRACS.length;
-  const padIdx1 = Math.floor(time * 0.29 + 5) % LOTUS_SANCTUARY_FRACS.length;
-  const [p0fx, p0fy] = LOTUS_SANCTUARY_FRACS[padIdx0];
-  const [p1fx, p1fy] = LOTUS_SANCTUARY_FRACS[padIdx1];
-  const patrol0X = width * p0fx + Math.cos(time * 0.85) * 48;
-  const patrol0Y = height * p0fy + Math.sin(time * 0.85) * 48;
-  const patrol1X = width * p1fx + Math.cos(time * 1.0 + 2.0) * 44;
-  const patrol1Y = height * p1fy + Math.sin(time * 1.0 + 2.0) * 44;
+  const v0Spd = Math.hypot(meanVx[0], meanVy[0]) || 1;
+  const dir0x = meanVx[0] / v0Spd;
+  const dir0y = meanVy[0] / v0Spd;
+
+  // Pick continuously moving lotus-leaf patrol waypoints for each of the 3 schools
+  const patrolX = [0, 0, 0];
+  const patrolY = [0, 0, 0];
+  const patrolSpeeds = [0.24, 0.29, 0.34];
+  const patrolOffsets = [0, 5, 2];
+  for (let sIdx = 0; sIdx < 3; sIdx++) {
+    const padIdx = Math.floor(time * patrolSpeeds[sIdx] + patrolOffsets[sIdx]) % LOTUS_SANCTUARY_FRACS.length;
+    const [pfx, pfy] = LOTUS_SANCTUARY_FRACS[padIdx];
+    const orb = 46 - sIdx * 4;
+    patrolX[sIdx] = width * pfx + Math.cos(time * (0.85 + sIdx * 0.15) + sIdx * 2.0) * orb;
+    patrolY[sIdx] = height * pfy + Math.sin(time * (0.85 + sIdx * 0.15) + sIdx * 2.0) * orb;
+  }
 
   // Pre-collect koi spine danger points (head, mid, tail) for accurate body/tail avoidance
   const dangerPts: Array<{ x: number; y: number; r: number }> = [];
@@ -1528,14 +1533,14 @@ export function stepTadpoles(
       if (o.alarm > neighbourAlarm) neighbourAlarm = o.alarm;
     }
 
-    let ax = sx * 205;
-    let ay = sy * 205;
+    let ax = sx * 215;
+    let ay = sy * 215;
 
     // Breathing cohesion/alignment so the school stretches, splits around koi, and reforms organically
     const cohesionPulse = 0.65 + 0.45 * Math.sin(time * 0.42 + t.schoolId * 2.1);
     if (neighbours > 0) {
-      ax += (avx / neighbours - t.vx) * 1.45 + (cx / neighbours) * (0.95 * cohesionPulse);
-      ay += (avy / neighbours - t.vy) * 1.45 + (cy / neighbours) * (0.95 * cohesionPulse);
+      ax += (avx / neighbours - t.vx) * 1.45 + (cx / neighbours) * (1.05 * cohesionPulse);
+      ay += (avy / neighbours - t.vy) * 1.45 + (cy / neighbours) * (1.05 * cohesionPulse);
     }
 
     // Individual organic wander so the school never locks into a fixed shape or halts
@@ -1543,23 +1548,21 @@ export function stepTadpoles(
     ax += (hx * Math.cos(wanderAng) - hy * Math.sin(wanderAng)) * 22;
     ay += (hx * Math.sin(wanderAng) + hy * Math.cos(wanderAng)) * 22;
 
-    if (t.schoolId === 1 && isFollowing) {
-      // Smaller school follows just behind/alongside the larger school's path for 5s without criss-crossing
-      const followTargetX = c0x - dir0x * 46;
-      const followTargetY = c0y - dir0y * 46;
-      ax += (v0x - t.vx) * 2.2 + (followTargetX - t.x) * 0.38;
-      ay += (v0y - t.vy) * 2.2 + (followTargetY - t.y) * 0.38;
+    const smallIdx = t.schoolId > 0 ? t.schoolId - 1 : -1;
+    const isFollowing = smallIdx >= 0 && followState.followTimers[smallIdx] > 0 && counts[0] > 0;
+    if (isFollowing) {
+      // Smaller school follows just behind/alongside the largest school's path for 5s without criss-crossing
+      const followTargetX = centX[0] - dir0x * (42 + smallIdx * 18);
+      const followTargetY = centY[0] - dir0y * (42 + smallIdx * 18);
+      ax += (meanVx[0] - t.vx) * 2.2 + (followTargetX - t.x) * 0.38;
+      ay += (meanVy[0] - t.vy) * 2.2 + (followTargetY - t.y) * 0.38;
     } else {
-      // Patrol smoothly under/between lotus leaves (with gentle lateral peel-off during cooldown)
-      const targetX = t.schoolId === 0 ? patrol0X : patrol1X;
-      const targetY = t.schoolId === 0 ? patrol0Y : patrol1Y;
-      ax += (targetX - t.x) * 0.18;
-      ay += (targetY - t.y) * 0.18;
+      ax += (patrolX[t.schoolId] - t.x) * 0.18;
+      ay += (patrolY[t.schoolId] - t.y) * 0.18;
 
-      if (t.schoolId === 1 && followState.cooldown > 4.0 && n0 > 0) {
-        // Peel off laterally onto its own path right after the 5s follow ends
-        const perpX = -dir0y;
-        const perpY = dir0x;
+      if (smallIdx >= 0 && followState.cooldowns[smallIdx] > 4.0 && counts[0] > 0) {
+        const perpX = -dir0y * (smallIdx === 0 ? 1 : -1);
+        const perpY = dir0x * (smallIdx === 0 ? 1 : -1);
         ax += perpX * 55;
         ay += perpY * 55;
       }
@@ -1574,7 +1577,7 @@ export function stepTadpoles(
       const ux = mdx / mDist;
       const uy = mdy / mDist;
       const strength = (1.08 - normMid) * 165;
-      const tangDir = t.schoolId === 0 ? 1 : -1;
+      const tangDir = t.schoolId === 1 ? -1 : 1;
       ax += ux * strength - uy * tangDir * (strength * 0.55);
       ay += uy * strength + ux * tangDir * (strength * 0.55);
     }

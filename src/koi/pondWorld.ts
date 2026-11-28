@@ -40,7 +40,7 @@ export const DEFAULT_KOI_CONFIG: KoiPondConfig = {
 
 const MAX_KOI_SNAPSHOT = 4;
 const MAX_MINNOW_SNAPSHOT = 512;
-const MAX_TADPOLE_SNAPSHOT = 64;
+const MAX_TADPOLE_SNAPSHOT = 256;
 
 export class PondWorld {
   width = 0;
@@ -62,7 +62,10 @@ export class PondWorld {
 
   /** Small fish are stepped in discrete quanta to match the glyph cadence. */
   private fishStepAccum = 0;
-  private readonly tadpoleFollowState = { followTimer: 0, cooldown: 0 };
+  private readonly tadpoleFollowState = {
+    followTimers: [0, 0] as [number, number],
+    cooldowns: [0, 0] as [number, number],
+  };
 
   // Preallocated fixed-step interpolation snapshots (zero allocations per frame)
   private readonly prevKoiSpineX = new Float32Array(MAX_KOI_SNAPSHOT * SPINE_NODE_COUNT);
@@ -219,8 +222,10 @@ export class PondWorld {
 
     this.fish = seedPondFish(w, h);
     this.tadpoles = seedTadpoles(w, h);
-    this.tadpoleFollowState.followTimer = 0;
-    this.tadpoleFollowState.cooldown = 0;
+    this.tadpoleFollowState.followTimers[0] = 0;
+    this.tadpoleFollowState.followTimers[1] = 0;
+    this.tadpoleFollowState.cooldowns[0] = 0;
+    this.tadpoleFollowState.cooldowns[1] = 0;
     this.fishStepAccum = 0;
     this.hasSnapshot = false;
   }
